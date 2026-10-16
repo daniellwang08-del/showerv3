@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import and_, func, or_, select
 
 from app.api.websocket import publish_ws_event
 from app.core.logging import get_logger
-from app.models.database import Job, JobMatchResult, UserJobStatus, ValidJobUserApplication
+from app.models.database import Job, JobMatchResult, User, UserJobStatus, ValidJobUserApplication
 from app.services.job_exclusion_types import (
     APPLIED_COMPANY_EXCLUSION,
     LOCATION_UNKNOWN_EXCLUSION,
@@ -24,6 +25,14 @@ from app.storage.user_repository import UserRepository
 logger = get_logger(__name__)
 
 _SCORE_CMP_EXCLUSIONS = frozenset({LOWER_SCORE_EXCLUSION, SUPERSEDED_BY_HIGHER_EXCLUSION})
+
+# Platform settings that feed per-user dedup rules, and the user column that
+# says whether that user follows the platform value ("default") or not.
+PLATFORM_DEDUP_MODE_COLUMNS = {
+    "dedup_rule_applied_company_enabled": User.dedup_applied_company_mode,
+    "dedup_rule_score_comparison_enabled": User.dedup_score_comparison_mode,
+    "default_dedup_recycle_days": User.dedup_recycle_mode,
+}
 
 
 def _utcnow() -> datetime:
@@ -356,6 +365,36 @@ async def reconcile_dedup_rules_for_user(
         "score_comparison_enabled": score_comparison_enabled,
         "recycle_days": recycle_days,
     }
+
+
+async def reconcile_dedup_rules_for_default_users(changed_keys: Iterable[str]) -> int:
+    """Re-check existing jobs for every user who follows a changed platform default.
+
+    Users with a ``custom`` mode for that rule keep their own setting, so a
+    platform change does not touch them. Returns the number of users reconciled.
+    """
+    columns = [col for key, col in PLATFORM_DEDUP_MODE_COLUMNS.items() if key in set(changed_keys)]
+    if not columns:
+        return 0
+    async with get_session() as session:
+        user_ids = list(
+            (
+                await session.execute(
+                    select(User.id).where(
+                        or_(*(func.coalesce(col, "default") != "custom" for col in columns))
+                    )
+                )
+            ).scalars().all()
+        )
+    reconciled = 0
+    for user_id in user_ids:
+        try:
+            await reconcile_dedup_rules_for_user(user_id)
+            reconciled += 1
+        except Exception as e:
+            logger.warning("dedup_rules_default_reconcile_failed", user_id=user_id, error=str(e))
+    logger.info("dedup_rules_default_reconciled", users=reconciled, keys=sorted(set(changed_keys)))
+    return reconciled
 
 
 async def _collect_applied_company_hide_targets(

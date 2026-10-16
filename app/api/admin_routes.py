@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import ColumnElement, and_, func, literal_column, or_, select, text
 
@@ -312,21 +312,45 @@ async def get_system_settings(current_user: dict = Depends(require_admin)):
         return await system_settings_service.get_system_settings_payload(session)
 
 
+async def _dedup_defaults(session) -> dict[str, Any]:
+    from app.services.dedup_rules_reconcile import PLATFORM_DEDUP_MODE_COLUMNS
+
+    effective = await system_settings_service.get_effective_settings(session)
+    return {key: effective.get(key) for key in PLATFORM_DEDUP_MODE_COLUMNS}
+
+
+def _schedule_dedup_default_reconcile(
+    background_tasks: BackgroundTasks, before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    """Dedup rules only run on newly analyzed jobs, so a changed platform
+    default would otherwise leave existing boards out of step with it."""
+    changed = [key for key in before if before[key] != after.get(key)]
+    if not changed:
+        return
+    from app.services.dedup_rules_reconcile import reconcile_dedup_rules_for_default_users
+
+    background_tasks.add_task(reconcile_dedup_rules_for_default_users, changed)
+    logger.info("dedup_rules_default_reconcile_scheduled", keys=changed)
+
+
 @router.put("/system-settings")
 async def put_system_settings(
     body: SystemSettingsUpdate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin),
 ):
     if not body.settings:
         raise HTTPException(status_code=400, detail="No settings provided")
     async with get_session() as session:
         try:
+            before = await _dedup_defaults(session)
             payload = await system_settings_service.upsert_settings(
                 session,
                 body.settings,
                 updated_by_user_id=current_user.get("user_id"),
             )
             await session.commit()
+            _schedule_dedup_default_reconcile(background_tasks, before, await _dedup_defaults(session))
             return payload
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -335,12 +359,15 @@ async def put_system_settings(
 @router.delete("/system-settings/{key}")
 async def delete_system_setting(
     key: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_admin),
 ):
     async with get_session() as session:
         try:
+            before = await _dedup_defaults(session)
             payload = await system_settings_service.clear_override(session, key)
             await session.commit()
+            _schedule_dedup_default_reconcile(background_tasks, before, await _dedup_defaults(session))
             return payload
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

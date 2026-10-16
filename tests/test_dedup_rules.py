@@ -52,6 +52,22 @@ def test_unrelated_saves_do_not_reconcile():
     assert tasks.calls == []
 
 
+def test_changing_platform_dedup_default_reconciles_default_users():
+    from app.api.admin_routes import _schedule_dedup_default_reconcile
+
+    tasks = _Tasks()
+    before = {"dedup_rule_score_comparison_enabled": False, "default_dedup_recycle_days": 60}
+    after = {"dedup_rule_score_comparison_enabled": True, "default_dedup_recycle_days": 60}
+    _schedule_dedup_default_reconcile(tasks, before, after)
+    assert tasks.calls == [
+        ("reconcile_dedup_rules_for_default_users", (["dedup_rule_score_comparison_enabled"],))
+    ]
+
+    tasks = _Tasks()
+    _schedule_dedup_default_reconcile(tasks, before, dict(before))
+    assert tasks.calls == []
+
+
 def _sql(category):
     expr = sql_filter_for_invalid_category(column("exclusion_type"), category)
     return str(expr.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))

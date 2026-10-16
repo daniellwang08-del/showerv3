@@ -261,7 +261,7 @@ class Settings(BaseSettings):
     # Legacy unused key kept for env/back-compat only; never read at runtime.
     dedup_rule_location_unknown_enabled: bool = False
     dedup_rule_applied_company_enabled: bool = False
-    dedup_rule_score_comparison_enabled: bool = False
+    dedup_rule_score_comparison_enabled: bool = True
 
     # ── Non-LLM vector match engine ─────────────────────────────────────
     # llm    = Phase A scoring via LLM only (legacy behavior).
