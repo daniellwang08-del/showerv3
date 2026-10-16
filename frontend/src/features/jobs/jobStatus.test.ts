@@ -9,6 +9,7 @@ import {
   jobStage,
   relativeTime,
   sourceLabel,
+  sourceOrigin,
   workMode,
 } from './jobStatus';
 
@@ -91,7 +92,23 @@ describe('formatting helpers', () => {
     expect(sourceLabel(makeJob({ added_from: 'manual', from_me: false }))).toBe('Added by a teammate');
     expect(sourceLabel(makeJob({ added_from: 'admin_manual', source: null }))).toBe('Added by team');
     expect(sourceLabel(makeJob({ source: 'remoterocketship' }))).toBe('RemoteRocketship');
-    expect(sourceLabel(makeJob({ source: null, added_from: null, domain: 'boards.greenhouse.io' }))).toBe('greenhouse.io');
+    expect(sourceLabel(makeJob({ source: null, added_from: null, domain: 'boards.greenhouse.io' }))).toBe('Career page');
+  });
+
+  it('resolves icon origins for the From column', () => {
+    expect(sourceOrigin(makeJob({ source: 'linkedin' }))).toEqual({
+      label: 'LinkedIn',
+      logoSrc: '/integrations/job-sites/linkedin.svg',
+      icon: 'globe',
+    });
+    expect(sourceOrigin(makeJob({ source: 'remoterocketship' })).logoSrc).toBe(
+      '/integrations/job-sites/remoterocketship.svg',
+    );
+    expect(sourceOrigin(makeJob({ source: null, domain: 'boards.greenhouse.io' }))).toMatchObject({
+      label: 'Career page',
+      icon: 'career',
+    });
+    expect(sourceOrigin(makeJob({ from_me: true, added_from: 'manual' })).icon).toBe('user');
   });
 
   it('hides dismissed rows except on the failed board', () => {

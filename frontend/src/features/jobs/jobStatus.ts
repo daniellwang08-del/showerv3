@@ -90,7 +90,83 @@ const SOURCE_NAMES: Record<string, string> = {
   linkedin: 'LinkedIn',
   greenhouse: 'Greenhouse',
   lever: 'Lever',
+  indeed: 'Indeed',
+  glassdoor: 'Glassdoor',
+  wellfound: 'Wellfound',
+  remotive: 'Remotive',
+  remoteok: 'Remote OK',
+  jobicy: 'Jobicy',
+  themuse: 'The Muse',
+  ziprecruiter: 'ZipRecruiter',
+  usajobs: 'USAJOBS',
+  handshake: 'Handshake',
+  jooble: 'Jooble',
+  reed: 'Reed',
+  arbeitnow: 'Arbeitnow',
+  otta: 'Otta',
+  jsearch: 'JSearch',
 };
+
+/** Slugs that have `/integrations/job-sites/{slug}.svg` artwork. */
+const JOB_SITE_LOGO_SLUGS = new Set([
+  'adzuna',
+  'arbeitnow',
+  'glassdoor',
+  'handshake',
+  'indeed',
+  'jobicy',
+  'jobright',
+  'jooble',
+  'jsearch',
+  'linkedin',
+  'otta',
+  'reed',
+  'remoteok',
+  'remoterocketship',
+  'remotive',
+  'themuse',
+  'usajobs',
+  'wellfound',
+  'ziprecruiter',
+]);
+
+const SOURCE_SLUG_ALIASES: Record<string, string> = {
+  'remote-rocketship': 'remoterocketship',
+  'remote_rocketship': 'remoterocketship',
+  'remote ok': 'remoteok',
+  'remote-ok': 'remoteok',
+  'the muse': 'themuse',
+  'the-muse': 'themuse',
+  zip: 'ziprecruiter',
+  angelist: 'wellfound',
+  angel.co: 'wellfound',
+};
+
+const CAREER_PAGE_HOST_RE =
+  /(?:^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|workable\.com|myworkdayjobs\.com|icims\.com|jobvite\.com|smartrecruiters\.com|bamboohr\.com|applytojob\.com|recruitee\.com|personio\.de|teams\.freshteam\.com)(?:$|\/)/i;
+
+export type SourceOriginIcon = 'user' | 'users' | 'career' | 'globe';
+
+export type SourceOrigin = {
+  /** Short tooltip / accessible name. */
+  label: string;
+  /** Job-site logo under /public/integrations/job-sites when available. */
+  logoSrc?: string;
+  /** Fallback Lucide glyph when there is no logo. */
+  icon: SourceOriginIcon;
+};
+
+function normalizeSourceSlug(raw: string | null | undefined): string {
+  const key = (raw || '').trim().toLowerCase();
+  if (!key || key === 'job_sites' || key === 'manual' || key === 'admin_manual') return '';
+  const compact = key.replace(/\s+/g, '');
+  return SOURCE_SLUG_ALIASES[key] || SOURCE_SLUG_ALIASES[compact] || compact.replace(/[^a-z0-9]/g, '');
+}
+
+function isCareerPageHost(domain: string | null | undefined, url: string | null | undefined): boolean {
+  const hay = `${domain || ''} ${url || ''}`.toLowerCase();
+  return CAREER_PAGE_HOST_RE.test(hay);
+}
 
 /** Where the row came from: the user, the team, or a named job board. */
 export function sourceLabel(job: DashboardJob): string {
@@ -98,8 +174,26 @@ export function sourceLabel(job: DashboardJob): string {
   if (job.added_from === 'manual') return job.added_by_name ? `Added by ${job.added_by_name}` : 'Added by a teammate';
   if (job.added_from === 'admin_manual') return 'Added by team';
   const key = (job.source || job.added_from || '').toLowerCase();
-  if (key && key !== 'job_sites') return SOURCE_NAMES[key] ?? job.source ?? key;
+  if (key && key !== 'job_sites') return SOURCE_NAMES[normalizeSourceSlug(key)] ?? SOURCE_NAMES[key] ?? job.source ?? key;
+  if (isCareerPageHost(job.domain, job.source_url)) return 'Career page';
   return job.domain.replace(/^(www|jobs|careers|boards|job-boards)\./, '') || '-';
+}
+
+/** Icon-first origin for the jobs table (logo when we have one, else a simple glyph). */
+export function sourceOrigin(job: DashboardJob): SourceOrigin {
+  const label = sourceLabel(job);
+  if (job.from_me) return { label, icon: 'user' };
+  if (job.added_from === 'manual' || job.added_from === 'admin_manual') return { label, icon: 'users' };
+
+  const slug = normalizeSourceSlug(job.source) || normalizeSourceSlug(job.added_from);
+  if (slug && JOB_SITE_LOGO_SLUGS.has(slug)) {
+    return { label, logoSrc: `/integrations/job-sites/${slug}.svg`, icon: 'globe' };
+  }
+  // ATS / company career boards (Greenhouse, Lever, Ashby, …) or bare domains.
+  if (isCareerPageHost(job.domain, job.source_url) || slug === 'greenhouse' || slug === 'lever' || slug === 'ashby') {
+    return { label: label === '-' ? 'Career page' : label, icon: 'career' };
+  }
+  return { label, icon: 'globe' };
 }
 
 export function relativeTime(dateStr: string | null | undefined, now = Date.now()): string {
