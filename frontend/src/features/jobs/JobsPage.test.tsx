@@ -184,14 +184,30 @@ describe('JobsPage', () => {
 
   it('opens the detail panel on row click and Enter', async () => {
     const user = userEvent.setup();
-    const [a, b] = [makeJob({ id: 'a', title: 'Alpha' }), makeJob({ id: 'b', title: 'Beta' })];
+    const [a, b] = [
+      makeJob({ id: 'a', title: 'Alpha', company: 'Acme' }),
+      makeJob({ id: 'b', title: 'Beta' }),
+    ];
     seed([a, b]);
     renderPage();
-    await user.click(screen.getByText('Alpha'));
+    await user.click(screen.getByText('Acme'));
     expect(screen.getByTestId('location')).toHaveTextContent('/app/jobs?job=a');
     rows()[1].focus();
     await user.keyboard('{Enter}');
     expect(screen.getByTestId('location')).toHaveTextContent('job=b');
+  });
+
+  it('opens the posting from the job title without opening the panel', async () => {
+    const user = userEvent.setup();
+    seed([makeJob({ id: 'a', title: 'Alpha', source_url: 'https://jobs.example.com/alpha' })]);
+    renderPage();
+    const link = screen.getByRole('link', { name: 'Alpha' });
+    expect(link).toHaveAttribute('href', 'https://jobs.example.com/alpha');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveClass('text-foreground');
+    link.addEventListener('click', (e) => e.preventDefault());
+    await user.click(link);
+    expect(screen.getByTestId('location')).not.toHaveTextContent('job=a');
   });
 
   it('selects with checkboxes and shift-range, then bulk marks applied', async () => {

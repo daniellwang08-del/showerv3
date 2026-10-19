@@ -432,11 +432,23 @@ function Cell({
       );
     case 'title': {
       const sub = job.company || job.domain;
+      const titleClass = cn('truncate font-medium', applied ? 'text-muted-foreground' : 'text-foreground');
+      const posting = /^https?:\/\//i.test(job.source_url || '') ? job.source_url : null;
       return (
         <div className="min-w-0">
-          <div className={cn('truncate font-medium', applied ? 'text-muted-foreground' : 'text-foreground')}>
-            {job.title || 'Untitled role'}
-          </div>
+          {posting ? (
+            <a
+              href={posting}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={`Open ${job.title || 'this job'} posting`}
+              className={cn(titleClass, 'block underline-offset-2 hover:underline')}
+            >
+              {job.title || 'Untitled role'}
+            </a>
+          ) : (
+            <div className={titleClass}>{job.title || 'Untitled role'}</div>
+          )}
           <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <span className="truncate">{sub || '-'}</span>
             <VisibilityLabel job={job} iconOnly />
