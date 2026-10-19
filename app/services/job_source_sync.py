@@ -39,7 +39,7 @@ SYNC_INTERVAL_HOURS = 6
 # Hard cap on sources per user (API enforces on create).
 MAX_SOURCES_PER_USER = 10
 # Shortest board-supplied posting text that stands in for the fetched page.
-MIN_BOARD_DESCRIPTION_CHARS = 200
+MIN_BOARD_DESCRIPTION_CHARS = 500
 
 
 def _now() -> datetime:

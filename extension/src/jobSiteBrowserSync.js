@@ -201,7 +201,11 @@ async function run(tabId, func, args = []) {
 
 // ── collectors ───────────────────────────────────────────────────────────────
 
-export function glassdoorJobUrl(base, startUrl, jobId) {
+/**
+ * Glassdoor redirects keyword searches to a canonical path and drops filters
+ * such as fromAge on the way, so they are re-applied to the canonical path.
+ */
+export function glassdoorSearchUrl(base, startUrl, jobId = null) {
   const params = new URLSearchParams(base.search);
   try {
     for (const [k, v] of new URL(startUrl).searchParams) {
@@ -211,15 +215,26 @@ export function glassdoorJobUrl(base, startUrl, jobId) {
     /* start url is validated server-side */
   }
   params.delete("sc.keyword");
-  params.set("jl", jobId);
-  return `${base.origin}${base.path}?${params.toString()}`;
+  params.delete("jl");
+  if (jobId) params.set("jl", jobId);
+  const query = params.toString();
+  return `${base.origin}${base.path}${query ? `?${query}` : ""}`;
 }
+
+export const glassdoorJobUrl = (base, startUrl, jobId) => glassdoorSearchUrl(base, startUrl, jobId);
 
 async function collectGlassdoor(task, work) {
   const startUrl = task.urls[0];
   await waitForComplete(work.tabId);
   if (await run(work.tabId, pageIsBlocked)) return { blocked: true, jobs: [] };
-  const search = await run(work.tabId, readGlassdoorSearch);
+  let search = await run(work.tabId, readGlassdoorSearch);
+  const filtered = search ? glassdoorSearchUrl(search, startUrl) : "";
+  if (search && filtered !== `${search.origin}${search.path}${search.search}`) {
+    await sleep(jitter(800, 1600));
+    await navigate(work.tabId, filtered);
+    if (await run(work.tabId, pageIsBlocked)) return { blocked: true, jobs: [] };
+    search = await run(work.tabId, readGlassdoorSearch);
+  }
   if (!search || !search.cards.length) {
     return { jobs: [], error: "Glassdoor showed no jobs for this search." };
   }
