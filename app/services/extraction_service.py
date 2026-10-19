@@ -92,7 +92,11 @@ _AGGREGATOR_DOMAINS: frozenset[str] = frozenset({
 def _is_aggregator_domain(url: str) -> bool:
     """Return True if *url* belongs to a known job-aggregator that blocks HTTP."""
     try:
-        host = urlparse(url).netloc.lower()
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+        # Adzuna serves its /details/<id> pages to the curl_cffi fallback.
+        if "adzuna." in host and parsed.path.startswith("/details/"):
+            return False
         return any(
             host == d or host.endswith("." + d)
             for d in _AGGREGATOR_DOMAINS

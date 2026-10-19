@@ -1,6 +1,12 @@
 import { apiClient } from './client';
 
-export type JobSiteAuthType = 'none' | 'api_key' | 'account' | 'unavailable';
+/** `browser`: the NAO extension reads the board in the user's own browser. */
+export type JobSiteAuthType = 'none' | 'api_key' | 'account' | 'browser' | 'unavailable';
+
+export interface JobSiteBrowserSync {
+  collector: string;
+  host_patterns: string[];
+}
 
 export interface JobSiteCredentialField {
   key: string;
@@ -38,6 +44,7 @@ export interface JobSitePlugin {
   sort_order: number;
   credential_fields: JobSiteCredentialField[];
   session_capture: JobSiteSessionCapture | null;
+  browser_sync?: JobSiteBrowserSync | null;
   min_sync_hours?: number;
   /** Requests a key may ever make (Jooble free keys); null when uncapped. */
   lifetime_request_cap?: number | null;

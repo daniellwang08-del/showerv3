@@ -61,6 +61,9 @@ class BoardJob:
     # The board's own listing page when ``url`` is the employer's posting;
     # boards that require attribution link back here.
     source_url: str = ""
+    # Posting text the board already returned. New jobs with enough of it skip
+    # the page fetch, for boards whose pages block servers.
+    description: str = ""
 
 
 @dataclass

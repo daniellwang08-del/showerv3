@@ -150,7 +150,8 @@ _public_feed_cache: dict[tuple, tuple[float, list]] = {}
 
 
 async def _fetch_public_cached(plugin: JobSitePlugin, credentials: dict, ctx: FetchContext):
-    key = (plugin.slug, ctx.country_codes, ctx.max_jobs)
+    settings = tuple(sorted(plugin.settings_from(credentials).items()))
+    key = (plugin.slug, ctx.country_codes, ctx.max_jobs, settings)
     ttl = max(SYNC_INTERVAL_HOURS, plugin.min_sync_hours) * 3600
     hit = _public_feed_cache.get(key)
     if hit and time.monotonic() - hit[0] < ttl:
@@ -381,6 +382,12 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
     )
 
     plugin = get_plugin(plugin_slug)
+    if plugin is not None and plugin.auth_type == AuthType.BROWSER:
+        async with get_session() as session:
+            row = await _load_row(session, connection_id)
+            if row is not None:
+                row.sync_phase = None
+        return {"connection_id": connection_id, "status": "browser_only"}
     await _publish_sync(user_id, plugin, plugin_slug, "fetching")
     if lifetime_cap_reached(plugin, request_count):
         return await _record_failure(
@@ -392,6 +399,30 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
     except Exception as e:
         return await _record_failure(connection_id, plugin, e, counted_request=counts_request)
 
+    return await _ingest_listing(
+        connection_id,
+        plugin,
+        plugin_slug,
+        user_id,
+        listing,
+        chain_analysis=chain_analysis,
+        skip_phase_b=skip_phase_b,
+        counts_request=counts_request,
+    )
+
+
+async def _ingest_listing(
+    connection_id: str,
+    plugin: JobSitePlugin | None,
+    plugin_slug: str,
+    user_id: str,
+    listing: list,
+    *,
+    chain_analysis: bool,
+    skip_phase_b: bool,
+    counts_request: bool = False,
+) -> dict:
+    """Feed a fetched listing into the pipeline and record the successful sync."""
     try:
         counts = await ingest_board_jobs(
             listing,
@@ -450,6 +481,125 @@ async def sync_user_job_site_connection(connection_id: str) -> dict:
         "listings": len(listing),
         **counts,
     }
+
+
+def browser_plugin_slugs() -> list[str]:
+    from app.job_sites.registry import list_plugins
+
+    return [p.slug for p in list_plugins() if p.auth_type == AuthType.BROWSER]
+
+
+def _browser_due(row: UserJobSiteConnection, now: datetime) -> bool:
+    if not row.enabled or row.status not in RUNNABLE_STATUSES:
+        return False
+    if row.sync_phase == "fetching" and row.sync_started_at and now - row.sync_started_at < STALE_SYNC_PHASE:
+        return False
+    if row.next_sync_at is None:
+        return row.status == STATUS_CONNECTED
+    return row.next_sync_at <= now
+
+
+async def claim_browser_sync_tasks(user_id: str) -> list[dict]:
+    """Due browser-read boards for this user, marked as fetching for the extension to run."""
+    slugs = browser_plugin_slugs()
+    if not slugs:
+        return []
+    now = _now()
+    tasks: list[dict] = []
+    claimed: list[tuple[str, str]] = []
+    async with get_session() as session:
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        if not can_use_app(user):
+            return []
+        ctx = fetch_context_for_user(user)
+        rows = (
+            await session.execute(
+                select(UserJobSiteConnection).where(
+                    UserJobSiteConnection.user_id == user_id,
+                    UserJobSiteConnection.plugin_slug.in_(slugs),
+                )
+            )
+        ).scalars().all()
+        for row in rows:
+            plugin = get_plugin(row.plugin_slug)
+            if plugin is None or plugin.browser_sync is None or not _browser_due(row, now):
+                continue
+            try:
+                settings = decrypt_credentials(row.credentials_encrypted)
+            except Exception:
+                settings = {}
+            spec = plugin.browser_sync
+            tasks.append({
+                "connection_id": row.id,
+                "slug": plugin.slug,
+                "name": plugin.name,
+                "collector": spec.collector,
+                "urls": spec.start_urls(settings, ctx),
+                "max_jobs": spec.max_jobs,
+            })
+            row.sync_phase = "fetching"
+            row.sync_started_at = now
+            claimed.append((plugin.slug, plugin.name))
+    for slug, _name in claimed:
+        await _publish_sync(user_id, get_plugin(slug), slug, "fetching")
+    return tasks
+
+
+class BrowserBlocked(RateLimited):
+    """The board showed the user's browser a security check; wait before trying again."""
+
+
+BROWSER_BLOCKED_WAIT_SECONDS = 6 * 3600
+
+
+async def ingest_browser_results(
+    user_id: str,
+    slug: str,
+    jobs: list,
+    *,
+    error: str | None = None,
+    blocked: bool = False,
+) -> dict:
+    """Jobs the extension read from a browser-synced board, or why it could not."""
+    plugin = get_plugin(slug)
+    if plugin is None or plugin.auth_type != AuthType.BROWSER:
+        raise ConnectionConfigError(f"{slug} is not synced through the browser.")
+    async with get_session() as session:
+        row = (
+            await session.execute(
+                select(UserJobSiteConnection).where(
+                    UserJobSiteConnection.user_id == user_id,
+                    UserJobSiteConnection.plugin_slug == slug,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return {"status": "missing"}
+        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+        connection_id = row.id
+        pipeline = normalize_manual_submit_pipeline(getattr(user, "manual_submit_pipeline", None))
+
+    if not jobs and (error or blocked):
+        exc: Exception
+        if blocked:
+            exc = BrowserBlocked(
+                error or f"{plugin.name} showed your browser a security check. We will try again later.",
+                retry_after_seconds=BROWSER_BLOCKED_WAIT_SECONDS,
+            )
+        else:
+            exc = RuntimeError(error or f"The extension could not read {plugin.name}.")
+        return await _record_failure(connection_id, plugin, exc, counted_request=False)
+
+    _uid, chain_analysis, skip_phase_b = manual_submit_enqueue_flags(pipeline, is_admin=False, user_id=user_id)
+    return await _ingest_listing(
+        connection_id,
+        plugin,
+        slug,
+        user_id,
+        jobs,
+        chain_analysis=chain_analysis,
+        skip_phase_b=skip_phase_b,
+    )
 
 
 # A queued/fetching phase older than this belongs to a worker that died mid-sync.
@@ -536,6 +686,7 @@ async def sync_due_job_site_connections() -> dict:
             .where(
                 UserJobSiteConnection.enabled.is_(True),
                 UserJobSiteConnection.status.in_(RUNNABLE_STATUSES),
+                UserJobSiteConnection.plugin_slug.notin_(browser_plugin_slugs()),
                 or_(
                     UserJobSiteConnection.next_sync_at <= now,
                     (UserJobSiteConnection.next_sync_at.is_(None))

@@ -31,6 +31,8 @@ vi.mock('@/lib/extensionBridge', () => ({
   captureJobSiteNow: vi.fn(),
   focusJobSiteTab: vi.fn(),
   stopJobSiteConnect: vi.fn(),
+  connectExtensionSession: vi.fn(),
+  runJobSiteBrowserSync: vi.fn(),
 }));
 
 const api = vi.mocked(jobSitesApi);
@@ -410,5 +412,80 @@ describe('IntegrationsPage, job sites', () => {
     );
     expect(ext.stopJobSiteConnect).toHaveBeenCalledWith(false);
     expect(await within(sheet).findByRole('switch', { name: 'Auto-sync' })).toBeInTheDocument();
+  });
+
+  it('enables a public feed with its optional search keywords', async () => {
+    const user = userEvent.setup();
+    db.plugins.push(
+      makePlugin({
+        slug: 'welcometothejungle',
+        name: 'Welcome to the Jungle',
+        sort_order: 0,
+        credential_fields: [
+          { key: 'keywords', label: 'Search keywords', placeholder: '', help_url: null, secret: false, required: false },
+        ],
+      }),
+    );
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Connect Welcome to the Jungle' }));
+    const sheet = await screen.findByRole('dialog');
+    await user.type(within(sheet).getByLabelText(/Search keywords/), ' data engineer ');
+    await user.click(within(sheet).getByRole('button', { name: 'Enable' }));
+    await waitFor(() =>
+      expect(api.connectJobSite).toHaveBeenCalledWith('welcometothejungle', { credentials: { keywords: 'data engineer' } }),
+    );
+  });
+
+  describe('browser-synced boards', () => {
+    const glassdoor = makePlugin({
+      slug: 'glassdoor',
+      name: 'Glassdoor',
+      auth_type: 'browser',
+      sort_order: 0,
+      browser_sync: { collector: 'glassdoor', host_patterns: ['https://*.glassdoor.com/*'] },
+      credential_fields: [
+        { key: 'keywords', label: 'Search keywords', placeholder: '', help_url: null, secret: false, required: false },
+      ],
+    });
+
+    it('signs the extension in, connects, and starts the browser sync', async () => {
+      const user = userEvent.setup();
+      db.plugins.push(glassdoor);
+      ext.detectExtension.mockResolvedValue({ installed: true });
+      ext.connectExtensionSession.mockResolvedValue({ ok: true });
+      ext.runJobSiteBrowserSync.mockResolvedValue({ ok: true });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Connect Glassdoor' }));
+      const sheet = await screen.findByRole('dialog');
+      await user.type(within(sheet).getByLabelText(/Search keywords/), 'react');
+      await user.click(await within(sheet).findByRole('button', { name: 'Connect with the extension' }));
+      await waitFor(() => expect(api.connectJobSite).toHaveBeenCalledWith('glassdoor', { credentials: { keywords: 'react' } }));
+      expect(ext.connectExtensionSession).toHaveBeenCalled();
+      expect(ext.runJobSiteBrowserSync).toHaveBeenCalled();
+      expect(await within(sheet).findByText('Synced through the NAO extension')).toBeInTheDocument();
+      expect(within(sheet).getByRole('button', { name: /Edit search/ })).toBeInTheDocument();
+    });
+
+    it('asks for the extension when it is missing', async () => {
+      const user = userEvent.setup();
+      db.plugins.push(glassdoor);
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'Connect Glassdoor' }));
+      const sheet = await screen.findByRole('dialog');
+      expect(await within(sheet).findByText('Install the NAO extension')).toBeInTheDocument();
+      expect(api.connectJobSite).not.toHaveBeenCalled();
+    });
+
+    it('sync now hands the run to the extension', async () => {
+      const user = userEvent.setup();
+      db.plugins.push(glassdoor);
+      db.connections.push(makeConnection({ plugin_slug: 'glassdoor' }));
+      ext.runJobSiteBrowserSync.mockResolvedValue({ ok: false, error: 'Reload the NAO extension.' });
+      renderPage();
+      const panel = await screen.findByRole('article', { name: 'Glassdoor' });
+      await user.click(within(panel).getByRole('button', { name: 'Sync Glassdoor now' }));
+      await waitFor(() => expect(api.syncJobSiteNow).toHaveBeenCalledWith('glassdoor'));
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Reload the NAO extension.'));
+    });
   });
 });

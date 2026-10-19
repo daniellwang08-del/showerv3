@@ -233,7 +233,7 @@ export interface JobSiteConnectAck {
  * contract the dashboard no longer knows, which looks like an impossible bug.
  * Comparing build stamps turns that into a plain "reload the extension".
  */
-export const EXPECTED_CONNECT_BUILD = '2026.10.02-nao-rebrand';
+export const EXPECTED_CONNECT_BUILD = '2026.10.19-browser-sync';
 
 const STALE_EXTENSION_MESSAGE =
   'The NAO extension is running an older build than this dashboard. ' +
@@ -373,6 +373,16 @@ export async function captureJobSiteNow(timeoutMs = 8000): Promise<{ ok: boolean
   if (!ack) return { ok: false, error: 'NAO extension did not respond.' };
   if (ack.ok) return { ok: true };
   return { ok: false, error: ackErrorMessage(ack) };
+}
+
+/** Ask the extension to run due browser-synced boards now; it answers before the sync finishes. */
+export async function runJobSiteBrowserSync(timeoutMs = 4000): Promise<{ ok: boolean; error?: string }> {
+  const ack = await requestExtension('RUN_JOB_SITE_BROWSER_SYNC', undefined, timeoutMs);
+  if (!ack || ack.build !== EXPECTED_CONNECT_BUILD) {
+    return { ok: false, error: ack ? ackErrorMessage(ack) : STALE_EXTENSION_MESSAGE };
+  }
+  if (!ack.ok) return { ok: false, error: ack.error || 'The NAO extension could not start the sync.' };
+  return { ok: true };
 }
 
 export async function focusJobSiteTab(timeoutMs = 2500): Promise<boolean> {

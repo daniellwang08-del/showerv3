@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,17 +14,20 @@ from app.core.logging import get_logger
 from app.job_sites.base import AuthType, FetchContext
 from app.job_sites.registry import get_plugin, list_plugins
 from app.models.database import User, UserJobSiteConnection
+from app.services.job_source_boards import BoardJob
 from app.services.job_site_connection_sync import (
     STATUS_CONNECTED,
     STATUS_NEEDS_REAUTH,
     STATUS_QUOTA_EXHAUSTED,
     STATUS_RATE_LIMITED,
+    claim_browser_sync_tasks,
     credential_hints,
     decrypt_credentials,
     connection_sync_activity,
     describe_fetch_error,
     encrypt_credentials,
     fetch_context_for_user,
+    ingest_browser_results,
     lifetime_cap_reached,
     verify_and_fetch,
 )
@@ -32,6 +36,8 @@ from app.storage.database import get_session
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/job-sites", tags=["job-sites"])
+
+VERIFY_MAX_JOBS = 3
 
 
 class JobSiteConnectRequest(BaseModel):
@@ -172,8 +178,8 @@ def _merge_credentials(plugin, body: JobSiteConnectRequest) -> dict:
         creds["cookies"] = body.cookies
     if body.storage:
         creds["storage"] = _trim_storage(body.storage)
-    if plugin.auth_type == AuthType.NONE:
-        return {}
+    if plugin.auth_type in (AuthType.NONE, AuthType.BROWSER):
+        return plugin.settings_from(creds)
     return creds
 
 
@@ -323,8 +329,12 @@ async def connect_job_site(
                 "its free plan allows. Request a new key from the site."
             ),
         )
+    browser = plugin.auth_type == AuthType.BROWSER
+    if plugin.auth_type == AuthType.NONE:
+        # Public feeds only need proof the search works; the queued sync pulls the full listing.
+        ctx = replace(ctx, max_jobs=VERIFY_MAX_JOBS)
     try:
-        listing = await verify_and_fetch(plugin.slug, credentials, ctx)
+        listing = [] if browser else await verify_and_fetch(plugin.slug, credentials, ctx)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except PermissionError as e:
@@ -366,16 +376,19 @@ async def connect_job_site(
         existing.credentials_encrypted = encrypted
         existing.enabled = True
         existing.last_error = None
-        existing.last_listing_count = len(listing)
+        existing.last_listing_count = None if browser else len(listing)
         existing.status = STATUS_CONNECTED
         existing.consecutive_failures = 0
         existing.next_sync_at = None
         existing.request_count = prior_requests + (1 if plugin.lifetime_request_cap else 0)
+        if browser:
+            existing.sync_phase = None
         await session.flush()
         response = _to_response(existing, hints)
         connection_id = existing.id
 
-    await _enqueue_connection_sync(connection_id)
+    if not browser:
+        await _enqueue_connection_sync(connection_id)
     logger.info(
         "job_site_connected",
         user_id=user_id,
@@ -463,6 +476,15 @@ async def sync_job_site_now(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Reconnect this site before syncing.",
             )
+        plugin = get_plugin(slug)
+        if plugin is not None and plugin.auth_type == AuthType.BROWSER:
+            # The extension picks this up on its next poll; a manual run also
+            # retries after a security check the user may have just passed.
+            row.next_sync_at = None
+            row.status = STATUS_CONNECTED
+            if row.sync_phase != "fetching":
+                row.sync_phase = None
+            return {"enqueued": True, "browser": True}
         if row.status in (STATUS_RATE_LIMITED, STATUS_QUOTA_EXHAUSTED) and (
             row.next_sync_at is None or row.next_sync_at > datetime.now(timezone.utc).replace(tzinfo=None)
         ):
@@ -480,3 +502,60 @@ async def sync_job_site_now(
             detail="Job queue unavailable. Retry when Redis and workers are healthy.",
         )
     return {"enqueued": True}
+
+
+MAX_BROWSER_JOBS = 60
+
+
+class BrowserJob(BaseModel):
+    url: str = Field(max_length=2000)
+    title: str = Field(default="", max_length=500)
+    company: str = Field(default="", max_length=300)
+    location: str = Field(default="", max_length=300)
+    description: str = Field(default="", max_length=60_000)
+    source_url: str = Field(default="", max_length=2000)
+
+
+class BrowserResultsRequest(BaseModel):
+    jobs: list[BrowserJob] = Field(default_factory=list, max_length=MAX_BROWSER_JOBS)
+    error: str | None = Field(default=None, max_length=500)
+    blocked: bool = False
+
+
+@router.get("/browser-tasks")
+async def job_site_browser_tasks(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Boards due for a sync that the extension reads in the user's browser."""
+    user_id = _require_user_id(current_user)
+    return {"tasks": await claim_browser_sync_tasks(user_id)}
+
+
+@router.post("/{slug}/browser-results")
+async def job_site_browser_results(
+    slug: str,
+    body: BrowserResultsRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    user_id = _require_user_id(current_user)
+    jobs = [
+        BoardJob(
+            url=j.url.strip(),
+            title=j.title.strip(),
+            company=j.company.strip(),
+            location=j.location.strip(),
+            description=j.description.strip(),
+            source_url=j.source_url.strip(),
+        )
+        for j in body.jobs
+        if j.url.strip().startswith(("https://", "http://"))
+    ]
+    try:
+        result = await ingest_browser_results(
+            user_id, slug, jobs, error=body.error, blocked=body.blocked
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    if result.get("status") == "missing":
+        raise HTTPException(status_code=404, detail="Not connected")
+    return result

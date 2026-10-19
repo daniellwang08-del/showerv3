@@ -105,6 +105,7 @@ const SOURCE_NAMES: Record<string, string> = {
   arbeitnow: 'Arbeitnow',
   otta: 'Otta',
   jsearch: 'JSearch',
+  remoteco: 'Remote.co',
 };
 
 /** Slugs that have `/integrations/job-sites/{slug}.svg` artwork. */
@@ -121,12 +122,14 @@ const JOB_SITE_LOGO_SLUGS = new Set([
   'linkedin',
   'otta',
   'reed',
+  'remoteco',
   'remoteok',
   'remoterocketship',
   'remotive',
   'themuse',
   'usajobs',
   'wellfound',
+  'welcometothejungle',
   'ziprecruiter',
 ]);
 

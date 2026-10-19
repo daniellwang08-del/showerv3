@@ -38,6 +38,8 @@ MAX_NEW_JOBS_PER_SYNC = 30
 SYNC_INTERVAL_HOURS = 6
 # Hard cap on sources per user (API enforces on create).
 MAX_SOURCES_PER_USER = 10
+# Shortest board-supplied posting text that stands in for the fetched page.
+MIN_BOARD_DESCRIPTION_CHARS = 200
 
 
 def _now() -> datetime:
@@ -171,6 +173,8 @@ async def _process_listing_job(
             normalized_url=norm,
             domain=domain,
         )
+        description = (board_job.description or "").strip()
+        has_description = len(description) >= MIN_BOARD_DESCRIPTION_CHARS
         job = Job(
             source_url=url,
             normalized_url=norm,
@@ -184,15 +188,26 @@ async def _process_listing_job(
                 "scraped_source": scraped_source,
                 **extra_meta,
                 **({"source_listing_url": board_job.source_url} if board_job.source_url else {}),
+                **({"board_description": True} if has_description else {}),
             },
         )
         session.add(job)
         await session.flush()
+        if has_description:
+            from app.services.manual_jd import apply_manual_job_description
+
+            await apply_manual_job_description(session, job=job, plain_text=description)
         await ujs_repo.upsert(user_id=user_id, job_id=job.id, status="active")
         extraction_id = extraction.id
+        job_id = job.id
         await session.commit()
         if added_ids is not None:
-            added_ids.append(job.id)
+            added_ids.append(job_id)
+
+    if has_description:
+        if chain_analysis:
+            await _enqueue_analysis(job_id, user_id, extraction_id, skip_phase_b=skip_phase_b)
+        return "created"
 
     await _enqueue_extract(
         extraction_id,

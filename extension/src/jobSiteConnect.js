@@ -32,7 +32,7 @@ const WATCH_SCRIPT_ID = "nao-job-site-watch";
  * restart it, while content scripts are re-read on every page load. That mix
  * produces confusing, impossible-looking errors without this stamp.
  */
-export const CONNECT_BUILD = "2026.10.02-nao-rebrand";
+export const CONNECT_BUILD = "2026.10.19-browser-sync";
 const STATE_KEY = "jobSiteConnectState";
 const SETTLE_MS = 1800;
 const MAX_STORAGE_BYTES = 96 * 1024;

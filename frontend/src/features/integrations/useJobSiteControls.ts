@@ -7,8 +7,11 @@ import {
   type JobSiteConnection,
   type JobSitePlugin,
 } from '@/api/jobSitesApi';
+import { runJobSiteBrowserSync } from '@/lib/extensionBridge';
 import { integrationKeys, invalidateJobSites } from './queries';
 import { errorDetail, needsReconnect, resumeLabel } from './status';
+
+class ExtensionSyncError extends Error {}
 
 export function upsertConnection(qc: ReturnType<typeof useQueryClient>, row: JobSiteConnection) {
   qc.setQueryData<JobSiteCatalog>(integrationKeys.jobSites, (prev) =>
@@ -33,14 +36,24 @@ export function useJobSiteControls(plugin: JobSitePlugin, connection: JobSiteCon
   });
 
   const sync = useMutation({
-    mutationFn: () => syncJobSiteNow(plugin.slug),
+    mutationFn: async () => {
+      await syncJobSiteNow(plugin.slug);
+      if (plugin.auth_type !== 'browser') return;
+      const started = await runJobSiteBrowserSync();
+      if (!started.ok) throw new ExtensionSyncError(started.error || 'The NAO extension could not start the sync.');
+    },
     onSuccess: () => {
       toast.success('Sync started', {
         description: 'Progress shows here and on the Jobs page. New jobs appear as they are scored.',
       });
       invalidateJobSites(qc);
     },
-    onError: (err) => toast.error(errorDetail(err, 'Failed to start the sync.')),
+    onError: (err) => {
+      invalidateJobSites(qc);
+      toast.error(
+        err instanceof ExtensionSyncError ? err.message : errorDetail(err, 'Failed to start the sync.'),
+      );
+    },
   });
 
   const enabled = toggle.isPending ? Boolean(toggle.variables) : connection.enabled;

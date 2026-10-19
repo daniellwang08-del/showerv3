@@ -86,6 +86,7 @@
     STOP_JOB_SITE_CONNECT: true,
     CAPTURE_JOB_SITE_NOW: true,
     FOCUS_JOB_SITE_TAB: true,
+    RUN_JOB_SITE_BROWSER_SYNC: true,
   };
 
   function forwardJobSite(data, targetOrigin) {

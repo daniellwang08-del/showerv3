@@ -3,6 +3,7 @@
 from . import (  # noqa: F401
     adzuna,
     arbeitnow,
+    browser_boards,
     jobicy,
     jobright,
     jooble,
@@ -14,4 +15,5 @@ from . import (  # noqa: F401
     themuse,
     unavailable,
     usajobs,
+    welcometothejungle,
 )

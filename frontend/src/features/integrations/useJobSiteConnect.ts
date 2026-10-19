@@ -107,10 +107,13 @@ export function isSessionFlow(plugin: JobSitePlugin): boolean {
  */
 export function useJobSiteConnect(
   plugin: JobSitePlugin,
-  { onConnected }: { onConnected: (row: JobSiteConnection) => void },
+  {
+    onConnected,
+    initialValues,
+  }: { onConnected: (row: JobSiteConnection) => void; initialValues?: Record<string, string> },
 ) {
   const sessionFlow = isSessionFlow(plugin);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() => ({ ...(initialValues ?? {}) }));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [extReady, setExtReady] = useState<boolean | null>(sessionFlow ? null : false);

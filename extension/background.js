@@ -4,6 +4,7 @@
 import { getBackendUrl, normalizeBackendUrl, setBackendUrl, setCurrentUser, setToken } from "./src/storage.js";
 import { isDashboardUrl } from "./src/backendOrigin.js";
 import { attachMessageHandlers as attachJobSiteConnectHandlers } from "./src/jobSiteConnect.js";
+import { attachBrowserSync } from "./src/jobSiteBrowserSync.js";
 import * as api from "./src/api.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
@@ -158,6 +159,7 @@ function scriptsForEngine(engineId) {
 const PENDING_JOB_KEY = "pendingWebappJob";
 
 attachJobSiteConnectHandlers();
+attachBrowserSync();
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "WEBAPP_EXTENSION_SESSION") {

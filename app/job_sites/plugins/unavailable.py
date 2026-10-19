@@ -73,20 +73,6 @@ _unavailable(
 )
 
 _unavailable(
-    slug="glassdoor",
-    name="Glassdoor",
-    blurb="Glassdoor has no public job-search API for individuals.",
-    homepage="https://www.glassdoor.com/",
-    logo_file="glassdoor.svg",
-    sort_order=220,
-    reason=(
-        "Glassdoor does not publish a job-seeker API, and signing in with your password "
-        "or cookies to scrape listings is not permitted. Use JSearch for aggregated "
-        "Glassdoor-sourced openings."
-    ),
-)
-
-_unavailable(
     slug="wellfound",
     name="Wellfound",
     blurb="AngelList / Wellfound has no public jobs API.",

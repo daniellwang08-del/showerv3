@@ -15,6 +15,7 @@ class AuthType(StrEnum):
     NONE = "none"  # public feed, enabling the tile is enough
     API_KEY = "api_key"  # user pastes a developer / publisher key
     ACCOUNT = "account"  # browser session captured by the extension (no passwords)
+    BROWSER = "browser"  # read by the extension in the user's own browser
     UNAVAILABLE = "unavailable"  # researched; no legitimate user-login fetch path
 
 
@@ -41,6 +42,23 @@ class FetchContext:
 
 
 FetchFn = Callable[[dict[str, Any], FetchContext], Awaitable[list[BoardJob]]]
+StartUrlsFn = Callable[[dict[str, Any], FetchContext], list[str]]
+
+
+@dataclass(frozen=True)
+class BrowserSync:
+    """Boards that block servers but serve real browsers.
+
+    The NAO extension opens ``start_urls`` in the user's browser, runs the
+    ``collector`` it ships for this board, and posts the jobs back. The server
+    never fetches these boards.
+    """
+
+    collector: str
+    start_urls: StartUrlsFn
+    # Origins the extension needs host access to (manifest host_permissions).
+    host_patterns: tuple[str, ...] = ()
+    max_jobs: int = 25
 
 
 @dataclass(frozen=True)
@@ -89,6 +107,7 @@ class JobSitePlugin:
     credential_fields: tuple[CredentialField, ...] = ()
     unavailable_reason: str = ""
     session_capture: SessionCapture | None = None
+    browser_sync: BrowserSync | None = None
     fetch: FetchFn | None = None
     # Minimum hours between syncs; set from the board's published polling rules.
     min_sync_hours: float = 6.0
@@ -140,7 +159,26 @@ class JobSitePlugin:
                 if capture
                 else None
             ),
+            "browser_sync": (
+                {
+                    "collector": self.browser_sync.collector,
+                    "host_patterns": list(self.browser_sync.host_patterns),
+                }
+                if self.browser_sync
+                else None
+            ),
         }
+
+    def settings_from(self, credentials: dict[str, Any]) -> dict[str, str]:
+        """Declared non-secret field values: the search settings a feed keeps per user."""
+        out: dict[str, str] = {}
+        for field in self.credential_fields:
+            if field.secret:
+                continue
+            value = str(credentials.get(field.key) or "").strip()
+            if value:
+                out[field.key] = value[:500]
+        return out
 
 
 COUNTRY_TO_ADZUNA = {

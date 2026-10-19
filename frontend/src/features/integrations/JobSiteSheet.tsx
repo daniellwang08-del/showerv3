@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
@@ -9,17 +9,19 @@ import {
   KeyRound,
   Loader2,
   RefreshCw,
+  SlidersHorizontal,
   Unplug,
   XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  connectJobSite,
   disconnectJobSite,
   type JobSiteCatalog,
   type JobSiteConnection,
   type JobSitePlugin,
 } from '@/api/jobSitesApi';
-import { detectExtension } from '@/lib/extensionBridge';
+import { connectExtensionSession, detectExtension, runJobSiteBrowserSync } from '@/lib/extensionBridge';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -87,9 +89,13 @@ export function JobSiteSheet({
       />
     );
   } else {
+    const savedSettings =
+      connection && (plugin.auth_type === 'none' || plugin.auth_type === 'browser')
+        ? connection.credential_hints
+        : undefined;
     body = (
       <>
-        <ConnectFlow key={plugin.slug} plugin={plugin} onConnected={onConnected} />
+        <ConnectFlow key={plugin.slug} plugin={plugin} onConnected={onConnected} initialValues={savedSettings} />
         {reconnecting ? (
           <Button variant="ghost" size="sm" className="mt-4" onClick={() => setReconnecting(false)}>
             Back
@@ -147,9 +153,22 @@ function ConnectedSite({
   const synced = parseServerDate(connection.last_synced_at);
   const hints = Object.entries(connection.credential_hints ?? {});
   const cap = plugin.lifetime_request_cap ?? null;
+  const browser = plugin.auth_type === 'browser';
+  const settingsOnly = plugin.auth_type === 'none' || browser;
 
   return (
     <div className="space-y-6">
+      {browser ? (
+        <Alert>
+          <AlertCircle />
+          <AlertTitle>Synced through the NAO extension</AlertTitle>
+          <AlertDescription>
+            {plugin.name} blocks servers, so the extension reads new listings in a minimized window of your
+            browser about every {Math.max(6, plugin.min_sync_hours ?? 6)} hours while Chrome is open and the
+            extension is signed in.
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {reauth ? (
         <Alert variant="destructive">
           <AlertCircle />
@@ -240,10 +259,15 @@ function ConnectedSite({
       <Separator />
 
       <div className="flex flex-wrap gap-2">
-        {plugin.auth_type !== 'none' ? (
+        {!settingsOnly ? (
           <Button variant="outline" onClick={onReconnect}>
             <KeyRound />
             {plugin.auth_type === 'api_key' ? 'Update credentials' : 'Reconnect'}
+          </Button>
+        ) : plugin.credential_fields.length ? (
+          <Button variant="outline" onClick={onReconnect}>
+            <SlidersHorizontal />
+            Edit search
           </Button>
         ) : null}
         <Button variant="destructive" onClick={() => setConfirmOpen(true)}>
@@ -276,8 +300,35 @@ function ConnectedSite({
   );
 }
 
-function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnected: (row: JobSiteConnection) => void }) {
-  const flow = useJobSiteConnect(plugin, { onConnected });
+function ConnectFlow({
+  plugin,
+  onConnected,
+  initialValues,
+}: {
+  plugin: JobSitePlugin;
+  onConnected: (row: JobSiteConnection) => void;
+  initialValues?: Record<string, string>;
+}) {
+  if (plugin.auth_type === 'browser') {
+    return <BrowserConnectFlow plugin={plugin} onConnected={onConnected} initialValues={initialValues} />;
+  }
+  return <ServerConnectFlow plugin={plugin} onConnected={onConnected} initialValues={initialValues} />;
+}
+
+function filledValues(values: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
+}
+
+function ServerConnectFlow({
+  plugin,
+  onConnected,
+  initialValues,
+}: {
+  plugin: JobSitePlugin;
+  onConnected: (row: JobSiteConnection) => void;
+  initialValues?: Record<string, string>;
+}) {
+  const flow = useJobSiteConnect(plugin, { onConnected, initialValues });
   const [showCredentials, setShowCredentials] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
   const hasFields = plugin.credential_fields.length > 0;
@@ -295,10 +346,7 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
       return;
     }
     setMissing([]);
-    const credentials = Object.fromEntries(
-      Object.entries(flow.values).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v),
-    );
-    void flow.submitCredentials(credentials);
+    void flow.submitCredentials(filledValues(flow.values));
   };
 
   const credentialForm = (
@@ -328,10 +376,13 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
           This board publishes a public job feed. Connecting enables automatic sync into your pipeline, no
           account required.
         </p>
+        {hasFields ? (
+          <CredentialFields plugin={plugin} values={flow.values} setValue={flow.setValue} missing={[]} />
+        ) : null}
         {flow.error ? <InlineError>{flow.error}</InlineError> : null}
-        <Button disabled={flow.busy} onClick={() => void flow.submitCredentials({})}>
+        <Button disabled={flow.busy} onClick={() => void flow.submitCredentials(filledValues(flow.values))}>
           {flow.busy ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
-          Enable
+          {flow.busy ? 'Checking the feed…' : 'Enable'}
         </Button>
       </div>
     );
@@ -415,6 +466,79 @@ function ConnectFlow({ plugin, onConnected }: { plugin: JobSitePlugin; onConnect
   );
 }
 
+function BrowserConnectFlow({
+  plugin,
+  onConnected,
+  initialValues,
+}: {
+  plugin: JobSitePlugin;
+  onConnected: (row: JobSiteConnection) => void;
+  initialValues?: Record<string, string>;
+}) {
+  const [values, setValues] = useState<Record<string, string>>(() => ({ ...(initialValues ?? {}) }));
+  const [extReady, setExtReady] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void detectExtension(1500, true).then((info) => {
+      if (!cancelled) setExtReady(info.installed);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const connect = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const signedIn = await connectExtensionSession();
+      if (!signedIn.ok) {
+        setError(signedIn.error || 'Could not sign the NAO extension in. Reload the extension and try again.');
+        return;
+      }
+      const row = await connectJobSite(plugin.slug, { credentials: filledValues(values) });
+      const started = await runJobSiteBrowserSync();
+      onConnected(row);
+      if (!started.ok) {
+        toast.warning('The extension did not start the sync', { description: started.error });
+      }
+    } catch (err: unknown) {
+      setError(errorDetail(err, `Failed to connect ${plugin.name}.`));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        {plugin.name} blocks servers, so the NAO extension reads new listings in a minimized window of your own
+        browser, no {plugin.name} account needed. Keep Chrome open with the extension installed.
+      </p>
+      {plugin.credential_fields.length ? (
+        <CredentialFields
+          plugin={plugin}
+          values={values}
+          setValue={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
+          missing={[]}
+        />
+      ) : null}
+      {error ? <InlineError>{error}</InlineError> : null}
+      {extReady === false ? (
+        <InstallGuide onInstalled={() => setExtReady(true)} hasCredentialFallback={false} />
+      ) : (
+        <Button disabled={busy || extReady === null} onClick={() => void connect()}>
+          {busy || extReady === null ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+          {extReady === null ? 'Looking for the extension…' : busy ? 'Connecting…' : 'Connect with the extension'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 const STEP_ICON: Record<StepState, typeof Circle> = {
   pending: Circle,
   active: Loader2,
@@ -474,7 +598,7 @@ function InstallGuide({
   return (
     <Section
       title="Install the NAO extension"
-      description="The extension reads your existing login so we can connect without a password. It isn't on a store yet, so load it once as an unpacked extension."
+      description="The extension connects job sites from your own browser, so no password is shared. It isn't on a store yet, so load it once as an unpacked extension."
       className="rounded-xl border p-4"
     >
       <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
