@@ -443,7 +443,9 @@ async def _collect_applied_company_hide_targets(
             targets.append((job, applied_by_key[key], _applied_company_reason(recycle_days)))
             continue
         inbox = next((inbox_by_company[k] for k in mail_applications.job_company_keys(job) if k in inbox_by_company), None)
-        if inbox is not None and not mail_applications.roles_match(inbox.role_title, job.title):
+        if inbox is not None and (
+            inbox.job_id not in (None, job.id) or not mail_applications.roles_match(inbox.role_title, job.title)
+        ):
             targets.append((job, inbox.job_id, mail_applications.dedup_reason(inbox)))
     return targets
 

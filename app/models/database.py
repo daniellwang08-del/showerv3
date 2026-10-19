@@ -1025,8 +1025,9 @@ class MailApplication(Base):
     """An application confirmation email ("thanks for applying") from the user's inbox.
 
     These count as applications even when the job was never in NAO. ``job_id``
-    is the first job auto-marked applied from this email; ``linked_job_ids``
-    lists every job it marked so a later "unmark" is not undone by the next sync.
+    is the one job this email confirms (marked applied by the user or from this
+    email); ``linked_job_ids`` remembers it so a later "unmark" is not undone
+    by the next sync.
     """
     __tablename__ = "mail_applications"
 

@@ -312,68 +312,77 @@ def link_applications(applications: list[dict[str, Any]], processes: list[dict[s
     return out
 
 
+def _marked_in_nao(owner_id: str):
+    """Jobs the owner marked applied in NAO (not marks written from a confirmation email)."""
+    return [
+        ValidJobUserApplication.user_id == owner_id,
+        func.coalesce(ValidJobUserApplication.applied_by_name, "") != mail_applications.EMAIL_APPLIED_LABEL,
+    ]
+
+
+def _not_confirmed_by_email(owner_id: str):
+    """A NAO mark that no stored confirmation is linked to (else the email already lists it)."""
+    return ~(
+        select(MailApplication.id)
+        .where(MailApplication.user_id == owner_id, MailApplication.job_id == ValidJobUserApplication.job_id)
+        .exists()
+    )
+
+
 async def _applications(session: AsyncSession, owner_id: str, since: datetime) -> list[dict[str, Any]]:
-    marked = (
+    """One row per application: each confirmation email, plus NAO marks no email confirms."""
+    score = (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == owner_id)
+    emails = (
         await session.execute(
-            select(
-                ValidJobUserApplication.applied_at,
-                ValidJobUserApplication.applied_by_name,
-                Job.id,
-                Job.title,
-                Job.company,
-                Job.location,
-                Job.source_url,
-                JobMatchResult.overall_score,
-            )
-            .join(Job, Job.id == ValidJobUserApplication.job_id)
-            .outerjoin(
-                JobMatchResult,
-                (JobMatchResult.job_id == Job.id) & (JobMatchResult.user_id == owner_id),
-            )
-            .where(ValidJobUserApplication.user_id == owner_id, ValidJobUserApplication.applied_at >= since)
-            .order_by(ValidJobUserApplication.applied_at.desc())
+            select(MailApplication, Job, JobMatchResult.overall_score)
+            .outerjoin(Job, Job.id == MailApplication.job_id)
+            .outerjoin(JobMatchResult, score)
+            .where(MailApplication.user_id == owner_id, MailApplication.applied_at >= since)
+            .order_by(MailApplication.applied_at.desc())
             .limit(MAX_APPLICATIONS)
         )
     ).all()
     apps = [
         {
-            "id": f"job:{job_id}",
-            "job_id": job_id,
-            "title": title,
-            "company": company,
-            "location": location,
-            "url": url,
-            "applied_at": _iso(applied_at),
-            "source": "email" if by == mail_applications.EMAIL_APPLIED_LABEL else "nao",
-            "match_score": round(score) if score is not None else None,
-        }
-        for applied_at, by, job_id, title, company, location, url, score in marked
-    ]
-    inbox_only = (
-        await session.execute(
-            select(MailApplication)
-            .where(
-                MailApplication.user_id == owner_id,
-                MailApplication.applied_at >= since,
-                MailApplication.job_id.is_(None),
-            )
-            .order_by(MailApplication.applied_at.desc())
-            .limit(MAX_APPLICATIONS)
-        )
-    ).scalars()
-    apps += [
-        {
             "id": f"mail:{a.id}",
-            "job_id": None,
-            "title": a.role_title,
-            "company": a.company,
-            "location": None,
-            "url": None,
+            "job_id": job.id if job else None,
+            "title": (job.title if job else None) or a.role_title,
+            "company": (job.company if job else None) or a.company,
+            "location": job.location if job else None,
+            "url": job.source_url if job else None,
             "applied_at": _iso(a.applied_at),
             "source": "email",
-            "match_score": None,
+            "match_score": round(s) if s is not None else None,
         }
-        for a in inbox_only
+        for a, job, s in emails
+    ]
+    marked = (
+        await session.execute(
+            select(ValidJobUserApplication.applied_at, Job, JobMatchResult.overall_score)
+            .join(Job, Job.id == ValidJobUserApplication.job_id)
+            .outerjoin(JobMatchResult, score)
+            .where(
+                *_marked_in_nao(owner_id),
+                ValidJobUserApplication.applied_at >= since,
+                _not_confirmed_by_email(owner_id),
+            )
+            .order_by(ValidJobUserApplication.applied_at.desc())
+            .limit(MAX_APPLICATIONS)
+        )
+    ).all()
+    apps += [
+        {
+            "id": f"job:{job.id}",
+            "job_id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "url": job.source_url,
+            "applied_at": _iso(applied_at),
+            "source": "nao",
+            "match_score": round(s) if s is not None else None,
+        }
+        for applied_at, job, s in marked
     ]
     apps.sort(key=lambda a: a["applied_at"] or "", reverse=True)
     return apps[:MAX_APPLICATIONS]
@@ -385,24 +394,14 @@ async def _count(session: AsyncSession, *where) -> int:
 
 async def _applications_counts(session: AsyncSession, owner_id: str, since: datetime) -> dict[str, int]:
     """Applications in the list window by where they were found, matching ``_applications``."""
-    marked = ValidJobUserApplication
-    by_hand = await _count(
+    email = await _count(session, MailApplication.user_id == owner_id, MailApplication.applied_at >= since)
+    nao = await _count(
         session,
-        marked.user_id == owner_id,
-        marked.applied_at >= since,
-        func.coalesce(marked.applied_by_name, "") != mail_applications.EMAIL_APPLIED_LABEL,
+        *_marked_in_nao(owner_id),
+        ValidJobUserApplication.applied_at >= since,
+        _not_confirmed_by_email(owner_id),
     )
-    marked_from_email = await _count(
-        session,
-        marked.user_id == owner_id,
-        marked.applied_at >= since,
-        marked.applied_by_name == mail_applications.EMAIL_APPLIED_LABEL,
-    )
-    inbox_only = await _count(
-        session, MailApplication.user_id == owner_id, MailApplication.applied_at >= since, MailApplication.job_id.is_(None)
-    )
-    email = marked_from_email + inbox_only
-    return {"total": by_hand + email, "email": email, "nao": by_hand}
+    return {"total": email + nao, "email": email, "nao": nao}
 
 
 async def applied_summary(
@@ -422,16 +421,13 @@ async def applied_summary(
     month_start = recent_week_bounds_for_timezone(tz_name, days=ACTIVITY_DAYS)[0]
     marked = ValidJobUserApplication
 
-    async def marks(start: datetime | None) -> int:
-        where = [marked.user_id == owner_id]
-        if start is not None:
-            where += [marked.applied_at >= start, marked.applied_at < end]
-        return await _count(session, *where)
+    async def marks(start: datetime) -> int:
+        return await _count(session, *_marked_in_nao(owner_id), marked.applied_at >= start, marked.applied_at < end)
 
     if from_inbox:
         all_time = await _count(session, MailApplication.user_id == owner_id)
     else:
-        all_time = await marks(None)
+        all_time = await _count(session, marked.user_id == owner_id)
     return {
         "source": "email" if from_inbox else "nao",
         "last_7_days": sum(d["applied"] for d in series[-7:]),

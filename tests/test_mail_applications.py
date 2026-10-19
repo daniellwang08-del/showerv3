@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.models.database import InterviewEvent, MailApplication
+from app.models.database import InterviewEvent, Job, MailApplication
 from app.services import interview_extraction as ex
 from app.services import interview_service as svc
 from app.services import mail_applications as apps
@@ -20,6 +20,8 @@ class TestRoleMatching:
             ("Software Engineer (Remote)", "Software Engineer"),
             ("Senior Backend Engineer - Remote, US", "Senior Backend Engineer"),
             ("Data Analyst, Full Time", "Data Analyst 12345"),
+            ("Sr. Back-End Engineer", "Senior Backend Engineer"),
+            ("Software Engineer III - R37", "Software Engineer III"),
         ],
     )
     def test_same_role(self, a, b):
@@ -32,10 +34,43 @@ class TestRoleMatching:
             ("Product Designer", "Product Manager"),
             ("Software Engineer", None),
             (None, None),
+            (
+                "Senior Software Engineer, Backend (Batch Infrastructure)",
+                "Senior Software Engineer, Backend (Card)",
+            ),
+            ("Senior Staff Machine Learning Engineer", "Staff Machine Learning Engineer"),
+            (
+                "Senior Backend Engineer - Databases Tempo | US | Remote",
+                "Senior Backend Engineer - Databases Tempo | Canada | Remote",
+            ),
         ],
     )
     def test_different_role(self, a, b):
         assert not apps.roles_match(a, b)
+
+    def test_compatible_with_a_job_the_user_marked(self):
+        assert apps.roles_compatible(None, "Senior Engineer, Payments")
+        assert apps.roles_compatible("Software Engineer", "Software Engineer, AI & Automation")
+        assert not apps.roles_compatible(
+            "Staff Software Engineer, Backend (Capacity Modeling)",
+            "Senior Software Engineer, Backend (Reliability Platform)",
+        )
+
+    @pytest.mark.parametrize(
+        "subject",
+        [
+            "Welcome to Randstad!",
+            "Confirm your Meta Career Profile email address",
+            "Finish your Humana application today",
+            "Thank you and Survey Request",
+        ],
+    )
+    def test_account_and_survey_mail_is_a_follow_up(self, subject):
+        assert apps.is_follow_up(subject)
+
+    def test_confirmations_are_not_follow_ups(self):
+        assert not apps.is_follow_up("Thank you for applying to Acme")
+        assert not apps.is_follow_up(None)
 
 
 class TestConfirmationPrefilter:
@@ -106,10 +141,10 @@ def _confirmation(company="Acme", role="Software Engineer"):
     )
 
 
-def _stored(role="Software Engineer", at=datetime(2026, 10, 1, 9), message_id="old"):
+def _stored(role="Software Engineer", at=datetime(2026, 10, 1, 9), message_id="old", company="Acme", subject=None, sender=None):
     return MailApplication(
-        id="a1", user_id="u1", company="Acme", company_key="acme", role_title=role,
-        applied_at=at, message_id=message_id,
+        id="a1", user_id="u1", company=company, company_key=ex.company_key(company), role_title=role,
+        applied_at=at, message_id=message_id, email_subject=subject, email_from=sender,
     )
 
 
@@ -142,6 +177,119 @@ class TestRecordApplication:
         message = {"id": "m1", "date": datetime(2026, 10, 5)}
         result = {"company": "  ", "role": "Engineer", "kind": "application_received"}
         assert asyncio.run(apps.record_application(session, "u1", message, result)) is None
+
+    def test_same_title_in_another_team_is_a_new_application(self):
+        session = _AppSession([_stored(role="Senior Software Engineer, Backend (Card)")])
+        message = {"id": "m2", "subject": "Application received", "date": datetime(2026, 10, 2, 9)}
+        result = _confirmation(role="Senior Software Engineer, Backend (Lakehouse)")
+        assert asyncio.run(apps.record_application(session, "u1", message, result))
+
+    @pytest.mark.parametrize("stored_role,new_role", [(None, "Software Engineer"), ("Software Engineer", None)])
+    def test_email_without_a_role_repeats_the_application(self, stored_role, new_role):
+        stored = _stored(role=stored_role)
+        session = _AppSession([stored])
+        message = {"id": "m2", "subject": "Thanks for applying to Acme", "date": datetime(2026, 10, 1, 10)}
+        assert asyncio.run(apps.record_application(session, "u1", message, _confirmation(role=new_role))) is None
+        assert stored.role_title == "Software Engineer"
+
+    def test_account_email_after_a_confirmation_repeats_it(self):
+        session = _AppSession([_stored(company="Randstad USA", at=datetime(2026, 10, 3, 19, 12))])
+        message = {"id": "m2", "subject": "Welcome to Randstad!", "date": datetime(2026, 10, 3, 19, 13)}
+        result = _confirmation(company="Randstad", role=None)
+        assert asyncio.run(apps.record_application(session, "u1", message, result)) is None
+        assert session.added == []
+
+    def test_follow_up_that_is_the_only_confirmation_is_stored(self):
+        session = _AppSession([])
+        message = {"id": "m1", "subject": "Finish your Humana application today", "date": datetime(2026, 9, 25)}
+        result = _confirmation(company="Humana", role="Lead Full Stack Engineer")
+        assert asyncio.run(apps.record_application(session, "u1", message, result))
+
+    def test_confirmation_after_an_account_email_takes_over_its_row(self):
+        welcome = _stored(role=None, company="Randstad", subject="Welcome to Randstad!")
+        session = _AppSession([welcome])
+        message = {"id": "m2", "subject": "Thank you for applying with Randstad USA", "date": datetime(2026, 10, 1, 9, 1)}
+        result = _confirmation(company="Randstad USA", role="Software Engineer III")
+        assert asyncio.run(apps.record_application(session, "u1", message, result)) is None
+        assert (welcome.company_key, welcome.role_title, welcome.email_subject) == (
+            "randstad usa", "Software Engineer III", "Thank you for applying with Randstad USA"
+        )
+
+    def test_follow_up_for_another_role_is_a_new_application(self):
+        session = _AppSession([_stored(role="Data Engineer", company="Meta")])
+        message = {"id": "m2", "subject": "Confirm your Meta Career Profile email address", "date": datetime(2026, 10, 1, 10)}
+        result = _confirmation(company="Meta", role="Data Scientist")
+        assert asyncio.run(apps.record_application(session, "u1", message, result))
+
+    def test_employer_note_through_a_platform_replaces_the_platform_row(self):
+        platform = _stored(
+            role="Senior Integrations Engineer", company="Clera", at=datetime(2026, 10, 1, 9),
+            subject="Thanks for applying to Clera!", sender="Clera Hiring Team <no-reply@ashbyhq.com>",
+        )
+        session = _AppSession([platform])
+        message = {
+            "id": "m2", "subject": "Your application through Clera", "from": "PAXAFE <no-reply@paxafe.com>",
+            "date": datetime(2026, 10, 1, 9, 3),
+        }
+        result = _confirmation(company="PAXAFE, Inc.", role="Senior Integrations Engineer")
+        assert asyncio.run(apps.record_application(session, "u1", message, result)) is None
+        assert (platform.company, platform.company_key) == ("PAXAFE, Inc.", "paxafe")
+
+    def test_platform_note_after_the_employer_is_ignored(self):
+        employer = _stored(
+            role="Staff Fullstack Engineer", company="Aleph", subject="Your application through Clera",
+            sender="Aleph <no-reply@aleph.com>",
+        )
+        session = _AppSession([employer])
+        message = {"id": "m2", "subject": "Thanks for applying to Clera!", "date": datetime(2026, 10, 1, 9, 2)}
+        result = _confirmation(company="Clera", role="Staff Fullstack Engineer")
+        assert asyncio.run(apps.record_application(session, "u1", message, result)) is None
+        assert employer.company == "Aleph"
+
+    def test_unrelated_company_with_the_same_title_is_a_new_application(self):
+        session = _AppSession([_stored(company="Globex", subject="Thanks for applying to Globex")])
+        message = {"id": "m2", "subject": "Thanks for applying to Acme", "date": datetime(2026, 10, 1, 9, 5)}
+        assert asyncio.run(apps.record_application(session, "u1", message, _confirmation()))
+
+
+def _job(id, title, company="Acme", posted=datetime(2026, 9, 20)):
+    return Job(id=id, title=title, company=company, posted_date=posted, raw_metadata={})
+
+
+class TestLinkPicking:
+    def test_email_without_a_role_confirms_the_nearby_nao_mark(self):
+        app = _stored(role=None, at=datetime(2026, 10, 9, 0, 2))
+        marked = [
+            (_job("j1", "Senior Software Engineer"), datetime(2026, 10, 9, 0, 1), "Jiadong"),
+            (_job("j2", "Data Engineer"), datetime(2026, 9, 20), "Jiadong"),
+        ]
+        assert apps._pick_marked(app, marked, set()).id == "j1"
+
+    def test_mark_at_another_company_or_already_claimed_is_skipped(self):
+        app = _stored(role=None, at=datetime(2026, 10, 9))
+        marked = [
+            (_job("j1", "Engineer", company="Globex"), datetime(2026, 10, 9), "Jiadong"),
+            (_job("j2", "Engineer"), datetime(2026, 10, 9), "Jiadong"),
+        ]
+        assert apps._pick_marked(app, marked, {"j2"}) is None
+
+    def test_users_own_mark_beats_an_email_mark_on_a_duplicate_posting(self):
+        app = _stored(role="Senior Engineer", at=datetime(2026, 10, 9, 0, 19))
+        marked = [
+            (_job("copy", "Senior Engineer"), datetime(2026, 10, 9, 0, 19), apps.EMAIL_APPLIED_LABEL),
+            (_job("mine", "Senior Engineer"), datetime(2026, 10, 9, 0, 18), "Jiadong"),
+        ]
+        assert apps._pick_marked(app, marked, set()).id == "mine"
+
+    def test_one_pool_job_per_email_and_only_the_same_team(self):
+        app = _stored(role="Senior Software Engineer, Backend (Batch Infrastructure)")
+        jobs = [
+            _job("card", "Senior Software Engineer, Backend (Card)"),
+            _job("old", "Senior Software Engineer, Backend (Batch Infrastructure)", posted=datetime(2026, 9, 1)),
+            _job("new", "Senior Software Engineer, Backend (Batch Infrastructure)", posted=datetime(2026, 9, 25)),
+        ]
+        assert apps._pick_pool_job(app, jobs, set()).id == "new"
+        assert apps._pick_pool_job(app, jobs, {"new", "old"}) is None
 
 
 def test_dedup_reason_names_company_role_and_date():

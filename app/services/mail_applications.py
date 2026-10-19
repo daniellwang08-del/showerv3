@@ -2,10 +2,13 @@
 
 An application confirmation ("Thanks for applying to Acme") is the source of
 truth for "applied" once a mailbox is connected, because people also apply
-outside NAO. Each confirmation is stored once per message and:
+outside NAO. One application often sends several emails (a resend, a
+recruiting platform and the employer, a generic and a role-specific note), so
+each application is stored once, and each stored application:
 
-* marks jobs in the user's pool with the same company and role as applied
-  ("Email confirmation"), and
+* links to at most one job: the job the user marked applied in NAO around
+  the same time, else one pool job with the same company and role, which is
+  then marked applied ("Email confirmation"), and
 * feeds the applied-company dedup rule for companies with no job in NAO.
 """
 
@@ -17,7 +20,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,13 +31,32 @@ from app.services import interview_extraction as extraction
 logger = get_logger(__name__)
 
 EMAIL_APPLIED_LABEL = "Email confirmation"
-# Two confirmations for the same company and role this close together are one application.
+# Two confirmations for the same company and role this close together are one
+# application. A confirmation without a role can't tell roles apart, so it
+# repeats any application at that company in the window.
 SAME_APPLICATION_WINDOW = timedelta(days=3)
+# A recruiting platform ("Thanks for applying to Clera") and the employer
+# ("Your application through Clera") confirm one application minutes apart.
+RELAY_WINDOW = timedelta(hours=1)
+# NAO marks a job applied when the user applies; the employer's email follows.
+MARK_WINDOW = timedelta(days=2)
 LINK_LOOKBACK = timedelta(days=120)
 
 _ROLE_NOISE = frozenset(
     {"remote", "hybrid", "onsite", "on", "site", "contract", "full", "part", "time", "fulltime",
-     "parttime", "us", "usa", "the", "a", "an", "of", "and", "for", "to", "in", "at", "m", "f", "d", "x"}
+     "parttime", "us", "usa", "the", "a", "an", "of", "and", "for", "to", "in", "at", "m", "f", "d", "x",
+     "position", "role"}
+)
+_ROLE_SYNONYMS = {"sr": "senior", "snr": "senior", "jr": "junior", "mgr": "manager"}
+_REQUISITION = re.compile(r"(?:r|jr|req)\d{2,}")
+# Account, verification and survey mail sent around an application. Some of
+# these are the only confirmation an employer sends ("Finish your Humana
+# application" opens with "We received your application"), so they only
+# repeat an application already stored for that company.
+_FOLLOW_UP = re.compile(
+    r"^\s*(welcome to|confirm your|verify your|please verify|activate your|finish your|complete your)\b"
+    r"|\bsurvey\b",
+    re.IGNORECASE,
 )
 
 
@@ -50,23 +72,39 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def role_tokens(title: str | None) -> frozenset[str]:
-    value = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", (title or "").lower())
-    value = value.replace("&", " and ")
-    words = re.findall(r"[a-z0-9+#]+", value)
-    return frozenset(w for w in words if w not in _ROLE_NOISE and not w.isdigit())
+    value = (title or "").lower().replace("&", " and ")
+    value = re.sub(r"\b(back|front|full)[\s-]+(end|stack)\b", r"\1\2", value)
+    words = (_ROLE_SYNONYMS.get(w, w) for w in re.findall(r"[a-z0-9+#]+", value))
+    return frozenset(
+        w for w in words if w not in _ROLE_NOISE and not w.isdigit() and not _REQUISITION.fullmatch(w)
+    )
 
 
 def roles_match(a: str | None, b: str | None) -> bool:
-    """Same role, ignoring work mode, location notes and requisition numbers.
+    """Same role, ignoring work mode, punctuation and requisition numbers.
 
-    Seniority words count: "Senior Engineer" and "Engineer" are different roles.
+    Every other word counts: seniority ("Senior Engineer" vs "Engineer"), team
+    ("Backend (Card)" vs "Backend (Lakehouse)") and location ("Canada").
     """
     ta, tb = role_tokens(a), role_tokens(b)
-    if not ta or not tb:
-        return False
-    if ta == tb:
+    return bool(ta) and ta == tb
+
+
+def roles_compatible(email_role: str | None, job_title: str | None) -> bool:
+    """The email may confirm this job: same role, or one title is a shorter form of the other."""
+    ta, tb = role_tokens(email_role), role_tokens(job_title)
+    if not ta:
         return True
-    return len(ta & tb) / len(ta | tb) >= 0.8
+    return bool(tb) and (ta <= tb or tb <= ta)
+
+
+def is_follow_up(subject: str | None) -> bool:
+    return bool(_FOLLOW_UP.search(subject or ""))
+
+
+def _company_variant(a: str, b: str) -> bool:
+    """'randstad' and 'randstad usa': one name is the other plus extra words."""
+    return a == b or a.startswith(b + " ") or b.startswith(a + " ")
 
 
 def job_company_keys(job: Job) -> set[str]:
@@ -103,6 +141,58 @@ def email_url(conn: MailConnection | None, message_id: str | None, thread_id: st
 # ── Storing confirmations ───────────────────────────────────────────────────
 
 
+def _names_company(text: str, key: str) -> bool:
+    token = _first_token(key)
+    return len(token) >= 3 and re.search(rf"\b{re.escape(token)}\b", text.lower()) is not None
+
+
+def repeated_application(
+    rows: list[MailApplication],
+    *,
+    company: str,
+    key: str,
+    role: str | None,
+    applied_at: datetime,
+    subject: str | None,
+    sender: str | None,
+) -> MailApplication | None:
+    """The stored application this confirmation repeats (updated in place), or None when it is new."""
+    text = f"{subject or ''} {sender or ''}"
+    follow_up = is_follow_up(subject)
+    for row in rows:
+        if not _company_variant(row.company_key, key) or abs(row.applied_at - applied_at) > SAME_APPLICATION_WINDOW:
+            continue
+        if row.role_title and role and not roles_match(row.role_title, role):
+            continue
+        if follow_up:
+            return row
+        if is_follow_up(row.email_subject):
+            # The confirmation itself arrived after an account or survey email: it describes the application.
+            row.company, row.company_key = company[:300], key
+            row.role_title = role or row.role_title
+            row.email_subject, row.email_from = (subject or "")[:500] or None, (sender or "")[:500] or None
+            return row
+    for row in rows:
+        if row.company_key != key or abs(row.applied_at - applied_at) > SAME_APPLICATION_WINDOW:
+            continue
+        if not row.role_title or not role or roles_match(row.role_title, role):
+            if role and not row.role_title:
+                row.role_title = role
+            return row
+    for row in rows:
+        if row.company_key == key or abs(row.applied_at - applied_at) > RELAY_WINDOW:
+            continue
+        if not roles_match(row.role_title, role):
+            continue
+        if _names_company(text, row.company_key):
+            # This is the employer's note about an application sent through row's platform.
+            row.company, row.company_key = company[:300], key
+            return row
+        if _names_company(f"{row.email_subject or ''} {row.email_from or ''}", key):
+            return row
+    return None
+
+
 async def record_application(
     session: AsyncSession, user_id: str, message: dict[str, Any], result: dict[str, Any]
 ) -> MailApplication | None:
@@ -113,22 +203,32 @@ async def record_application(
     if not key or applied_at is None:
         return None
 
-    existing = (
-        await session.execute(
-            select(MailApplication).where(
-                MailApplication.user_id == user_id, MailApplication.company_key == key
+    existing = list(
+        (
+            await session.execute(
+                select(MailApplication).where(
+                    MailApplication.user_id == user_id,
+                    or_(
+                        MailApplication.company_key.startswith(_first_token(key), autoescape=True),
+                        MailApplication.applied_at.between(applied_at - RELAY_WINDOW, applied_at + RELAY_WINDOW),
+                    ),
+                )
             )
-        )
-    ).scalars().all()
+        ).scalars().all()
+    )
+    if any(row.message_id == message["id"] for row in existing):
+        return None
     role = (result.get("role") or "").strip()[:300] or None
-    for row in existing:
-        if row.message_id == message["id"]:
-            return None
-        same_role = roles_match(row.role_title, role) or (not row.role_title and not role)
-        if same_role and abs(row.applied_at - applied_at) <= SAME_APPLICATION_WINDOW:
-            if role and not row.role_title:
-                row.role_title = role
-            return None
+    if repeated_application(
+        existing,
+        company=company,
+        key=key,
+        role=role,
+        applied_at=applied_at,
+        subject=message.get("subject"),
+        sender=message.get("from"),
+    ):
+        return None
 
     row = MailApplication(
         id=str(uuid.uuid4()),
@@ -186,26 +286,73 @@ def _remember_link(app: MailApplication, job_id: str) -> None:
         app.job_id = job_id
 
 
-async def link_jobs(session: AsyncSession, user_id: str) -> int:
-    """Mark pool jobs applied when a recent confirmation names the same company and role.
+def _pick_marked(
+    app: MailApplication, marked: list[tuple[Job, datetime, str | None]], claimed: set[str]
+) -> Job | None:
+    """The job already marked applied that this email confirms, preferring the user's own marks."""
+    options = [
+        (job, at, by)
+        for job, at, by in marked
+        if job.id not in claimed
+        and app.company_key in job_company_keys(job)
+        and abs(at - app.applied_at) <= MARK_WINDOW
+        and roles_compatible(app.role_title, job.title)
+    ]
+    if not options:
+        return None
+    best = min(
+        options,
+        key=lambda o: (not roles_match(app.role_title, o[0].title), o[2] == EMAIL_APPLIED_LABEL, abs(o[1] - app.applied_at)),
+    )
+    return best[0]
 
-    Runs after every sync so jobs scraped after the email still get marked.
-    A job is only ever linked once per email, so unmarking it sticks.
+
+def _pick_pool_job(app: MailApplication, jobs: list[Job], claimed: set[str]) -> Job | None:
+    """One pool job with the same company and role; the newest when the posting is listed twice."""
+    options = [
+        job
+        for job in jobs
+        if job.id not in claimed and app.company_key in job_company_keys(job) and roles_match(app.role_title, job.title)
+    ]
+    if not options:
+        return None
+    return max(options, key=lambda j: j.posted_date or j.created_at or datetime.min)
+
+
+async def link_jobs(session: AsyncSession, user_id: str) -> int:
+    """Link each recent unlinked confirmation to one job. Returns how many jobs were newly marked.
+
+    A job the user marked applied in NAO around the email's date is the same
+    application, so it is linked without a new mark (even when the email names
+    no role). Otherwise one pool job with the same company and role is marked
+    applied. Runs after every sync so jobs scraped after the email still get
+    linked; a linked email is never relinked, so unmarking its job sticks.
     """
     since = _utcnow() - LINK_LOOKBACK
     apps = list(
         (
             await session.execute(
-                select(MailApplication).where(
+                select(MailApplication)
+                .where(
                     MailApplication.user_id == user_id,
                     MailApplication.applied_at >= since,
-                    MailApplication.role_title.is_not(None),
+                    MailApplication.job_id.is_(None),
                 )
+                .order_by(MailApplication.applied_at)
             )
         ).scalars()
     )
     if not apps:
         return 0
+    claimed = set(
+        (
+            await session.execute(
+                select(MailApplication.job_id).where(
+                    MailApplication.user_id == user_id, MailApplication.job_id.is_not(None)
+                )
+            )
+        ).scalars()
+    )
 
     by_token: dict[str, list[MailApplication]] = {}
     for app in apps:
@@ -215,28 +362,52 @@ async def link_jobs(session: AsyncSession, user_id: str) -> int:
 
     marked = 0
     for token, group in by_token.items():
-        jobs = (
-            await session.execute(
-                select(Job)
-                .join(UserJobStatus, (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id))
-                .where(
-                    Job.status == "active",
-                    func.coalesce(Job.posted_date, Job.created_at) >= since,
-                    func.lower(Job.company).contains(token, autoescape=True),
+        company_has = func.lower(Job.company).contains(token, autoescape=True)
+        marked_jobs = [
+            (job, at, by)
+            for job, at, by in (
+                await session.execute(
+                    select(Job, ValidJobUserApplication.applied_at, ValidJobUserApplication.applied_by_name)
+                    .join(ValidJobUserApplication, ValidJobUserApplication.job_id == Job.id)
+                    .where(
+                        ValidJobUserApplication.user_id == user_id,
+                        ValidJobUserApplication.applied_at >= since - MARK_WINDOW,
+                        company_has,
+                    )
                 )
-                .limit(200)
-            )
-        ).scalars().all()
-        for job in jobs:
-            keys = job_company_keys(job)
-            for app in group:
-                if app.company_key not in keys or job.id in (app.linked_job_ids or []):
-                    continue
-                if not roles_match(app.role_title, job.title):
-                    continue
+            ).all()
+        ]
+        pool: list[Job] | None = None
+        for app in group:
+            job = _pick_marked(app, marked_jobs, claimed)
+            if job is not None:
                 _remember_link(app, job.id)
-                if await _mark_applied(session, user_id, job.id, app.applied_at):
-                    marked += 1
+                claimed.add(job.id)
+                continue
+            if not app.role_title or app.linked_job_ids:
+                continue
+            if pool is None:
+                pool = list(
+                    (
+                        await session.execute(
+                            select(Job)
+                            .join(UserJobStatus, (UserJobStatus.job_id == Job.id) & (UserJobStatus.user_id == user_id))
+                            .where(
+                                Job.status == "active",
+                                func.coalesce(Job.posted_date, Job.created_at) >= since,
+                                company_has,
+                            )
+                            .limit(200)
+                        )
+                    ).scalars()
+                )
+            job = _pick_pool_job(app, pool, claimed)
+            if job is None:
+                continue
+            _remember_link(app, job.id)
+            claimed.add(job.id)
+            if await _mark_applied(session, user_id, job.id, app.applied_at):
+                marked += 1
     await session.flush()
     return marked
 
@@ -244,7 +415,7 @@ async def link_jobs(session: AsyncSession, user_id: str) -> int:
 async def find_for_job(
     session: AsyncSession, user_id: str, job: Job, *, since: datetime
 ) -> tuple[MailApplication | None, MailApplication | None]:
-    """(same-role confirmation, any confirmation) at this job's company since ``since``."""
+    """(same-role confirmation not linked to another job, newest confirmation) at this job's company."""
     keys = job_company_keys(job)
     if not keys:
         return None, None
@@ -259,7 +430,9 @@ async def find_for_job(
             .order_by(MailApplication.applied_at.desc())
         )
     ).scalars().all()
-    same_role = next((r for r in rows if roles_match(r.role_title, job.title)), None)
+    same_role = next(
+        (r for r in rows if r.job_id in (None, job.id) and roles_match(r.role_title, job.title)), None
+    )
     return same_role, (rows[0] if rows else None)
 
 
