@@ -197,6 +197,53 @@ def test_fill_context_empty_without_documents():
     assert _run(assistant_routes._application_documents_text(session, _user("original"), "j1")) == ""
 
 
+def _profile_user(mode):
+    return SimpleNamespace(
+        id="u1",
+        application_resume_source=mode,
+        work_experience=USER_WE,
+        name_first="Jane",
+        name_last="Doe",
+        profile_email="jane@example.com",
+        phone_number="555-0100",
+        linkedin_url="https://linkedin.com/in/jane",
+        extra=["Authorized to work in the US without sponsorship."],
+        profile_summary="Kubernetes expert.",
+        technical_skills=[{"category": "Infra", "skills": "Kubernetes, Terraform"}],
+        education=[{"university_name": "MIT", "degree": "PhD"}],
+        profile_openai_cache="# Jane Doe\n## Summary\nKubernetes expert.\n## Work Experience\nGoogle",
+    )
+
+
+def test_answer_profile_original_file_keeps_only_contact_and_facts():
+    user = _profile_user("original")
+    docs = _run(assistant_routes._application_documents_text(_FakeSession(_build(None), ORIGINAL_TEXT), user, "j1"))
+    text = assistant_routes._answer_profile_text(user, docs)
+    assert "Jane Doe" in text and "jane@example.com" in text and "555-0100" in text
+    assert "linkedin.com/in/jane" in text
+    assert "Authorized to work in the US without sponsorship." in text
+    for leaked in ("Kubernetes", "Terraform", "MIT", "PhD", "Google", "Work Experience", "Summary"):
+        assert leaked not in text
+
+
+def test_answer_profile_tailored_resume_keeps_full_profile():
+    user = _profile_user("tailored")
+    docs = _run(assistant_routes._application_documents_text(_FakeSession(_build(TAILORED), ORIGINAL_TEXT), user, "j1"))
+    assert assistant_routes._answer_profile_text(user, docs) == user.profile_openai_cache
+
+
+def test_answer_profile_tailored_fallback_to_original_file_is_trimmed():
+    user = _profile_user("tailored")
+    docs = _run(assistant_routes._application_documents_text(_FakeSession(_build(None), ORIGINAL_TEXT), user, "j1"))
+    assert "Kubernetes" not in assistant_routes._answer_profile_text(user, docs)
+
+
+def test_answer_profile_without_uploaded_file_uses_full_profile():
+    user = _profile_user("original")
+    docs = _run(assistant_routes._application_documents_text(_FakeSession(None, None), user, "j1"))
+    assert assistant_routes._answer_profile_text(user, docs) == user.profile_openai_cache
+
+
 def test_session_docs_report_original_mode():
     row = SimpleNamespace(
         resume_pdf_status="skipped",

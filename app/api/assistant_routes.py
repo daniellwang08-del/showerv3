@@ -64,6 +64,7 @@ from app.storage.database import get_session
 from app.utils.company_name import companies_match
 from app.utils.date_bounds import day_bounds_for_timezone
 from app.utils.flexible_date import coerce_flexible_date, parse_flexible_date
+from app.utils.profile_converter import user_profile_to_openai_text
 
 assistant_router = APIRouter()
 logger = get_logger(__name__)
@@ -697,8 +698,8 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
         user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        profile_text = user.profile_openai_cache or ""
         documents_text = await _application_documents_text(session, user, req.job_id)
+        profile_text = _answer_profile_text(user, documents_text)
         if documents_text:
             profile_text = (profile_text + "\n\n" + documents_text).strip()
 
@@ -1425,7 +1426,8 @@ async def assistant_autofill(
         user = (await session.execute(select(User).options(undefer("*")).where(User.id == user_id))).scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-        profile_text = user.profile_openai_cache or ""
+        documents_text = await _application_documents_text(session, user, req.job_id)
+        profile_text = _answer_profile_text(user, documents_text)
         identity_text = _contact_identity_text(user)
         if identity_text:
             profile_text = (identity_text + "\n\n" + profile_text).strip()
@@ -1438,7 +1440,6 @@ async def assistant_autofill(
         eeo_text = _eeo_preferences_text(eeo_prefs)
         if eeo_text:
             profile_text = (profile_text + "\n\n" + eeo_text).strip()
-        documents_text = await _application_documents_text(session, user, req.job_id)
         if documents_text:
             profile_text = (profile_text + "\n\n" + documents_text).strip()
 
@@ -1648,15 +1649,36 @@ def _tailored_resume_text(tailored: Any, profile_we: list) -> str:
     return "\n".join(line for line in lines if line is not None).strip()
 
 
+_ORIGINAL_RESUME_HEADER = "## Original Resume (the file uploaded with this application)"
+
+_PROFILE_FACT_FIELDS = (
+    "name_first", "name_middle", "name_last", "profile_title", "profile_email",
+    "phone_country_code", "phone_number", "linkedin_url", "github_url", "extra",
+)
+
+
 def _original_resume_block(text: str) -> str:
     body = str(text or "").strip()[:24_000]
     if not body:
         return ""
     return (
-        "## Original Resume (the file uploaded with this application)\n"
-        "This is the résumé the employer receives. Answer summary, skills, and experience questions from it, "
-        "and never claim anything it does not support.\n\n" + body
+        f"{_ORIGINAL_RESUME_HEADER}\n"
+        "This is the résumé the employer receives and the only source for the candidate's summary, skills, "
+        "work experience, projects, education, and certificates. Answer those questions from it alone, "
+        "and never claim a skill, employer, title, date, degree, or achievement it does not support.\n\n" + body
     )
+
+
+def _answer_profile_text(user: Any, documents_text: str) -> str:
+    """The NAO profile text to show next to the application documents.
+
+    When the uploaded original file is the résumé sent, the profile keeps only
+    contact details and additional facts, so answers cannot mention summary,
+    skills, experience, or education that exist in the profile but not in the file.
+    """
+    if _ORIGINAL_RESUME_HEADER not in (documents_text or ""):
+        return getattr(user, "profile_openai_cache", None) or ""
+    return user_profile_to_openai_text({f: getattr(user, f, None) for f in _PROFILE_FACT_FIELDS})
 
 
 def _cover_letter_block(body: str) -> str:
