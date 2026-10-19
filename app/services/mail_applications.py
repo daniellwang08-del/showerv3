@@ -91,11 +91,9 @@ def roles_match(a: str | None, b: str | None) -> bool:
 
 
 def roles_compatible(email_role: str | None, job_title: str | None) -> bool:
-    """The email may confirm this job: same role, or one title is a shorter form of the other."""
+    """The email may confirm this job: same role, one title is a shorter form of the other, or either has none."""
     ta, tb = role_tokens(email_role), role_tokens(job_title)
-    if not ta:
-        return True
-    return bool(tb) and (ta <= tb or tb <= ta)
+    return not ta or not tb or ta <= tb or tb <= ta
 
 
 def is_follow_up(subject: str | None) -> bool:

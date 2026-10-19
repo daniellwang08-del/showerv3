@@ -51,6 +51,7 @@ class TestRoleMatching:
     def test_compatible_with_a_job_the_user_marked(self):
         assert apps.roles_compatible(None, "Senior Engineer, Payments")
         assert apps.roles_compatible("Software Engineer", "Software Engineer, AI & Automation")
+        assert apps.roles_compatible("Software Engineer - Video", "US")
         assert not apps.roles_compatible(
             "Staff Software Engineer, Backend (Capacity Modeling)",
             "Senior Software Engineer, Backend (Reliability Platform)",
