@@ -154,15 +154,36 @@ async def test_jsearch_searches_the_users_keywords(monkeypatch):
     seen = {}
 
     async def fake_get_json(url, params=None, headers=None, **_kw):
-        seen.update(params=params, headers=headers)
-        return {"data": [{"job_title": "Data Engineer", "job_apply_link": "https://acme.test/1", "employer_name": "Acme"}]}
+        seen.update(url=url, params=params, headers=headers)
+        return {
+            "status": "OK",
+            "data": {
+                "jobs": [
+                    {
+                        "job_title": "Data Engineer",
+                        "job_apply_link": "https://acme.test/1",
+                        "employer_name": "Acme",
+                        "job_location": "Toronto, ON",
+                        "job_description": "Build pipelines.",
+                    },
+                    {"job_title": "No link"},
+                ],
+                "cursor": "x",
+            },
+        }
 
     monkeypatch.setattr(jsearch, "get_json", fake_get_json)
     jobs = await jsearch._fetch({"api_key": "k", "keywords": "  senior   data engineer "}, FetchContext(country_codes=("CA",)))
+    assert seen["url"] == "https://jsearch.p.rapidapi.com/search-v2"
     assert seen["params"]["query"] == "senior data engineer in Canada"
+    assert seen["params"]["country"] == "ca"
     assert seen["headers"]["X-RapidAPI-Key"] == "k"
-    assert [j.title for j in jobs] == ["Data Engineer"]
+    assert [(j.title, j.company, j.location, j.description) for j in jobs] == [
+        ("Data Engineer", "Acme", "Toronto, ON", "Build pipelines.")
+    ]
     assert jsearch.search_query({}, FetchContext()) == "software engineer in United States"
+    assert jsearch.search_country(FetchContext(country_codes=("UK",))) == "gb"
+    assert jsearch.result_items({"data": [{"job_title": "old shape"}]}) == [{"job_title": "old shape"}]
     plugin = get_plugin("jsearch")
     assert plugin.settings_from({"api_key": "k", "keywords": "ml engineer"}) == {"keywords": "ml engineer"}
     assert sync.credential_hints("jsearch", {"api_key": "abcdefghijkl", "keywords": "ml engineer"})["keywords"] == "ml engineer"

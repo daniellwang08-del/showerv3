@@ -16,6 +16,20 @@ from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
 
 DEFAULT_KEYWORDS = "software engineer"
+# The original /search endpoint was retired and now answers 404 "Endpoint '/search' does not exist".
+SEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
+
+
+def search_country(ctx: FetchContext) -> str:
+    code = (ctx.primary_country or "US").lower()
+    return "gb" if code == "uk" else code
+
+
+def result_items(payload: Any) -> list[dict]:
+    """Jobs from a v2 payload (``data.jobs``), tolerating the old list-shaped ``data``."""
+    data = (payload or {}).get("data") if isinstance(payload, dict) else None
+    items = data.get("jobs") if isinstance(data, dict) else data
+    return [item for item in items or [] if isinstance(item, dict)]
 
 
 def search_query(credentials: dict[str, Any], ctx: FetchContext) -> str:
@@ -29,12 +43,12 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
     if not api_key:
         raise ValueError("JSearch requires a RapidAPI key.")
     payload = await get_json(
-        "https://jsearch.p.rapidapi.com/search",
+        SEARCH_URL,
         params={
             "query": search_query(credentials, ctx),
-            "page": "1",
             "num_pages": "1",
             "date_posted": "week",
+            "country": search_country(ctx),
         },
         headers={
             "X-RapidAPI-Key": api_key,
@@ -42,22 +56,21 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
         },
     )
     jobs: list[BoardJob] = []
-    for item in (payload or {}).get("data") or []:
-        if not isinstance(item, dict):
-            continue
+    for item in result_items(payload):
         url = str(item.get("job_apply_link") or item.get("job_google_link") or "").strip()
         title = str(item.get("job_title") or "").strip()
         if not url or not title:
             continue
-        city = str(item.get("job_city") or "").strip()
-        country = str(item.get("job_country") or "").strip()
-        location = ", ".join(p for p in (city, country) if p)
+        location = str(item.get("job_location") or "").strip() or ", ".join(
+            p for p in (str(item.get(k) or "").strip() for k in ("job_city", "job_state", "job_country")) if p
+        )
         jobs.append(
             BoardJob(
                 url=url,
                 title=title,
                 location=location,
                 company=str(item.get("employer_name") or "").strip(),
+                description=str(item.get("job_description") or "").strip(),
             )
         )
         if len(jobs) >= ctx.max_jobs:
