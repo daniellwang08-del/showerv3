@@ -233,7 +233,7 @@ export interface JobSiteConnectAck {
  * contract the dashboard no longer knows, which looks like an impossible bug.
  * Comparing build stamps turns that into a plain "reload the extension".
  */
-export const EXPECTED_CONNECT_BUILD = '2026.10.19-browser-sync';
+export const EXPECTED_CONNECT_BUILD = '2026.10.19-cookie-store';
 
 const STALE_EXTENSION_MESSAGE =
   'The NAO extension is running an older build than this dashboard. ' +

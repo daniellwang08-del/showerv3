@@ -32,9 +32,12 @@ const WATCH_SCRIPT_ID = "nao-job-site-watch";
  * restart it, while content scripts are re-read on every page load. That mix
  * produces confusing, impossible-looking errors without this stamp.
  */
-export const CONNECT_BUILD = "2026.10.19-browser-sync";
+export const CONNECT_BUILD = "2026.10.19-cookie-store";
 const STATE_KEY = "jobSiteConnectState";
 const SETTLE_MS = 1800;
+const NO_SITE_ACCESS =
+  "Chrome is not letting NAO read this site's cookies. Open chrome://extensions, click Details on NAO, " +
+  'set "Site access" to "On all sites" (or add this site), then try again.';
 const MAX_STORAGE_BYTES = 96 * 1024;
 
 /**
@@ -260,19 +263,56 @@ function cookieHeader(cookies) {
   return parts.join("; ");
 }
 
+/**
+ * The cookie store holding the board tab. Without a storeId, chrome.cookies
+ * reads the worker's own store (the regular profile), so a board tab in an
+ * Incognito window reads as "no cookies" even when it is signed in.
+ */
+async function siteCookieStoreId() {
+  if (!active || active.siteTabId == null || !chrome.cookies.getAllCookieStores) return undefined;
+  try {
+    const stores = await chrome.cookies.getAllCookieStores();
+    const store = (stores || []).find((s) => (s.tabIds || []).includes(active.siteTabId));
+    return store ? store.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readDomainCookies(domain, storeId) {
+  const base = storeId ? { domain, storeId } : { domain };
+  try {
+    // partitionKey {} adds partitioned (CHIPS) cookies to the unpartitioned ones.
+    return await chrome.cookies.getAll({ ...base, partitionKey: {} });
+  } catch {
+    return chrome.cookies.getAll(base);
+  }
+}
+
+async function hasHostAccess(domains) {
+  if (!chrome.permissions || !chrome.permissions.contains) return null;
+  try {
+    return await chrome.permissions.contains({ origins: originPatterns(domains) });
+  } catch {
+    return null;
+  }
+}
+
 async function collectCookies() {
   if (!active) return [];
   const out = [];
   const seen = new Set();
+  active.noHostAccess = false;
+  const storeId = await siteCookieStoreId();
   for (const raw of active.cookieDomains) {
     const domain = normalizeDomain(raw);
     if (!domain) continue;
     let list = [];
     try {
       // A bare `domain` filter already covers sub-domains and host-only cookies.
-      list = await chrome.cookies.getAll({ domain });
+      list = await readDomainCookies(domain, storeId);
     } catch (err) {
-      warn("cookies:read_failed", { domain, error: String((err && err.message) || err) });
+      warn("cookies:read_failed", { domain, storeId, error: String((err && err.message) || err) });
       continue;
     }
     for (const c of list || []) {
@@ -281,7 +321,18 @@ async function collectCookies() {
       seen.add(key);
       out.push(serializeCookie(c));
     }
-    log("cookies:read", { domain, count: (list || []).length });
+    log("cookies:read", { domain, storeId: storeId || "default", count: (list || []).length });
+  }
+  if (!out.length) {
+    const access = await hasHostAccess(active.cookieDomains);
+    let stores = [];
+    try {
+      stores = ((await chrome.cookies.getAllCookieStores()) || []).map((s) => ({ id: s.id, tabs: (s.tabIds || []).length }));
+    } catch {
+      /* diagnostics only */
+    }
+    warn("cookies:none_visible", { storeId: storeId || "default", hostAccess: access, stores, siteTabId: active.siteTabId });
+    if (access === false) active.noHostAccess = true;
   }
   return out;
 }
@@ -351,6 +402,9 @@ async function captureSession(url, reason) {
   const cookies = await collectCookies();
   if (!cookies.length) {
     warn("capture:no_cookies", { url, reason });
+    if (active.noHostAccess) {
+      notifyDashboard({ type: "JOB_SITE_CONNECT_STATUS", slug: active.slug, state: "no_site_access", url });
+    }
     return false;
   }
   if (!hasSessionCookies(cookies)) {
@@ -542,7 +596,6 @@ function onHistoryStateUpdated(details) {
 function onCookieChanged(changeInfo) {
   if (!changeInfo || !changeInfo.cookie) return;
   withActive(async (state) => {
-    if (state.captured) return;
     const domain = normalizeDomain(changeInfo.cookie.domain);
     const tracked = state.cookieDomains.some((d) => {
       const target = normalizeDomain(d);
@@ -557,6 +610,11 @@ function onCookieChanged(changeInfo) {
       cause: changeInfo.cause,
     });
     if (changeInfo.removed) return;
+    if (state.captured) {
+      // A new login after the dashboard rejected the captured session: capture again.
+      state.captured = false;
+      await persist();
+    }
     // A session cookie just appeared => the login POST succeeded. The redirect
     // to the signed-in page follows; the settle pass does the capture.
     scheduleSettle(state.lastUrl, "cookies.onChanged");
@@ -687,7 +745,13 @@ export async function startConnect(rawSession, sender) {
     hasSessionCookie: hasSessionCookies(preCookies),
   });
 
-  const tab = await chrome.tabs.create({ url: active.startUrl, active: true });
+  const dashboardWindowId = sender && sender.tab && sender.tab.windowId != null ? sender.tab.windowId : undefined;
+  let tab;
+  try {
+    tab = await chrome.tabs.create({ url: active.startUrl, active: true, windowId: dashboardWindowId });
+  } catch {
+    tab = await chrome.tabs.create({ url: active.startUrl, active: true });
+  }
   active.siteTabId = tab && tab.id != null ? tab.id : null;
   active.siteWindowId = tab && tab.windowId != null ? tab.windowId : null;
   active.lastUrl = active.startUrl;
@@ -749,6 +813,7 @@ export async function captureNow() {
   if (!ok) {
     state.captured = false;
     await persist();
+    if (state.noHostAccess) throw new Error(NO_SITE_ACCESS);
     throw new Error("No signed-in session found yet. Finish signing in, then try again.");
   }
   return { ok: true, build: CONNECT_BUILD };

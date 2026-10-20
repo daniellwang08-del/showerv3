@@ -23,6 +23,7 @@ export type ExtensionState =
   | 'capturing'
   | 'connecting'
   | 'signed_out'
+  | 'no_site_access'
   | 'cancelled'
   | 'need_extension'
   | 'start_failed'
@@ -55,6 +56,8 @@ export function extensionStatusText(state: ExtensionState, siteName: string): st
       return `Verifying the captured session against ${siteName}…`;
     case 'signed_out':
       return `Sign in on the ${siteName} tab. We connect automatically the moment it lands on your jobs page.`;
+    case 'no_site_access':
+      return `You are signed in, but Chrome is not letting the NAO extension read ${siteName}.`;
     case 'cancelled':
       return `The ${siteName} tab was closed before sign-in finished.`;
     case 'need_extension':
@@ -84,7 +87,7 @@ export function extensionSteps(state: ExtensionState, extReady: boolean | null, 
   const current =
     state === 'verifying' || state === 'signed_out'
       ? 2
-      : state === 'signed_in' || state === 'capturing' || state === 'connecting' || busy
+      : state === 'signed_in' || state === 'capturing' || state === 'connecting' || state === 'no_site_access' || busy
         ? 3
         : 1;
   for (let i = 1; i < steps.length; i += 1) {
@@ -217,6 +220,11 @@ export function useJobSiteConnect(
         if (cancelled || (status.slug && status.slug !== plugin.slug)) return;
         if (status.state) setLiveState(status.state);
         if (status.url) setLiveUrl(status.url);
+        if (status.state === 'no_site_access') {
+          setError(
+            `Open chrome://extensions, click Details on NAO, set "Site access" to "On all sites" (or add ${plugin.name}), then click "I'm signed in. Capture now".`,
+          );
+        }
       },
       onSession: (session) => {
         if (!cancelled) onSessionRef.current(session);
