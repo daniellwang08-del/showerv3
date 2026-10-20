@@ -44,6 +44,7 @@ const STEPS: { icon: LucideIcon; title: string; body: string; cost: string }[] =
 const USES_CREDIT = [
   'Preparing a job: tailored resume, cover letter, and application files',
   'Preparing a job you add by link, from the extension, or through the assistant',
+  'Tailoring a resume in Documents, Resume studio, or the assistant',
 ];
 
 const ALWAYS_FREE = [
@@ -64,11 +65,11 @@ const FAQ: { q: string; a: ReactNode }[] = [
   },
   {
     q: 'Can I choose which jobs use credits?',
-    a: 'Yes. Set a minimum match score in Preferences so only strong matches are prepared automatically, or turn automatic preparation off and prepare jobs one at a time.',
+    a: 'Yes. Set a minimum match score in Preferences and only jobs at or above it are prepared automatically. You can still prepare any other job by hand.',
   },
   {
     q: 'What happens when I run out?',
-    a: 'New jobs keep arriving and getting scored, but preparation pauses and job details stay locked until you add credits. Nothing you prepared earlier is deleted.',
+    a: 'New jobs keep arriving and getting scored, but preparation pauses and jobs that are not prepared yet stay locked until you add credits. Jobs you already prepared stay open with their documents.',
   },
   {
     q: 'Do credits expire?',
