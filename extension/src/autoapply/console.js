@@ -215,13 +215,20 @@ function startRun(job) {
 }
 
 async function rememberHandOff(tabId, jobId) {
-  // Lets the normal submit detection mark it applied when the user finishes.
+  // The background watches this tab and marks the job applied when the user submits.
   try {
     const { applyTabJobs } = await chrome.storage.session.get("applyTabJobs");
-    await chrome.storage.session.set({ applyTabJobs: { ...(applyTabJobs || {}), [String(tabId)]: { jobId, at: Date.now() } } });
+    await chrome.storage.session.set({
+      applyTabJobs: { ...(applyTabJobs || {}), [String(tabId)]: { jobId, at: Date.now() } },
+      ["aaHandoff:" + tabId]: { jobId, at: Date.now() },
+    });
   } catch {
     /* advisory */
   }
+  // Not every fill engine leaves the submit watcher on the page.
+  await chrome.scripting
+    .executeScript({ target: { tabId, allFrames: true }, files: ["content/submit-watch.js"] })
+    .catch(() => {});
 }
 
 async function finishRun(jobId, outcome) {
@@ -340,13 +347,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (hit) void saveHistory({ ...store.history, [hit[0]]: { ...hit[1], tabOpen: false } });
 });
 
-// The user finished one by hand: background marked it applied.
-chrome.storage.session.onChanged.addListener((changes) => {
-  const done = changes.appliedInBackground && changes.appliedInBackground.newValue;
-  if (done && done.jobId && store.history[done.jobId]) {
-    const h = store.history[done.jobId];
-    void saveHistory({ ...store.history, [done.jobId]: { ...h, status: "applied", message: "You submitted it.", at: Date.now(), tabOpen: false } });
-  }
+// The user submitted a handed-off tab: the background marked it applied and
+// rewrote the history.
+chrome.storage.local.onChanged.addListener((changes) => {
+  const next = changes[HISTORY_KEY] && changes[HISTORY_KEY].newValue;
+  if (next) set({ history: next });
 });
 
 // ── UI ──────────────────────────────────────────────────────────────────────

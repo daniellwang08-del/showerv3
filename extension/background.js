@@ -328,7 +328,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   if (!tab || !tab.url || !/^https?:/i.test(tab.url)) return;
   void (async () => {
-    if (!(await isAppAssistArmed())) return;
+    if (!(await isAppAssistArmed()) && !(await handOffEntry(tabId))) return;
     try {
       await injectAppHelpers(tabId);
     } catch (err) {
@@ -463,6 +463,44 @@ async function routeAutoApplySubmit(msg, sender) {
   return true;
 }
 
+// Tabs auto-apply filled but left for the user (dry run, CAPTCHA, ...) are
+// registered under "aaHandoff:<tabId>". A submit there is the user's own, so
+// it is marked applied here and recorded in the auto-apply history, whether
+// or not the side panel or the console is open.
+const AA_HANDOFF_PREFIX = "aaHandoff:";
+const AA_HISTORY_KEY = "aaHistory";
+
+async function handOffEntry(tabId) {
+  if (tabId == null) return null;
+  const key = AA_HANDOFF_PREFIX + tabId;
+  const data = await chrome.storage.session.get(key).catch(() => null);
+  return (data && data[key]) || null;
+}
+
+async function routeHandOffSubmit(sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  const entry = await handOffEntry(tabId);
+  if (!entry || !entry.jobId) return false;
+  const jobId = String(entry.jobId);
+  // Several frames can report one submit.
+  await chrome.storage.session.remove(AA_HANDOFF_PREFIX + tabId);
+  try {
+    await api.markApplied([jobId]);
+    await api.updateSession(jobId, "completed").catch(() => {});
+  } catch (err) {
+    console.warn("auto-apply hand-off mark applied failed", err);
+    await chrome.storage.session.set({ [AA_HANDOFF_PREFIX + tabId]: entry });
+    return true;
+  }
+  const { [AA_HISTORY_KEY]: history } = await chrome.storage.local.get(AA_HISTORY_KEY);
+  if (history && history[jobId]) {
+    const next = { ...history[jobId], status: "applied", message: "You submitted it.", at: Date.now(), tabOpen: false };
+    await chrome.storage.local.set({ [AA_HISTORY_KEY]: { ...history, [jobId]: next } });
+  }
+  chrome.runtime.sendMessage({ type: "SESSION_CHANGED", jobId }).catch(() => {});
+  return true;
+}
+
 const AUTO_APPLY_PAGE = "autoapply.html";
 
 async function openAutoApplyConsole() {
@@ -488,6 +526,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 async function handleAppSubmitted(msg, sender) {
   try {
     if (await routeAutoApplySubmit(msg, sender)) return;
+    if (await routeHandOffSubmit(sender)) return;
     // Multi-frame submit-watch and Workday detection can both fire for one
     // submit; a second event must not complete the *next* job.
     const { lastAppSubmittedAt } = await chrome.storage.session.get("lastAppSubmittedAt");
@@ -514,7 +553,7 @@ async function handleAppSubmitted(msg, sender) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.session.remove(AA_TAB_PREFIX + tabId).catch(() => {});
+  chrome.storage.session.remove([AA_TAB_PREFIX + tabId, AA_HANDOFF_PREFIX + tabId]).catch(() => {});
   chrome.storage.session
     .get("applyTabJobs")
     .then(({ applyTabJobs }) => {
