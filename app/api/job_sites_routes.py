@@ -334,6 +334,8 @@ async def connect_job_site(
     if plugin.auth_type == AuthType.NONE:
         # Public feeds only need proof the search works; the queued sync pulls the full listing.
         ctx = replace(ctx, max_jobs=VERIFY_MAX_JOBS)
+    elif plugin.verify_max_jobs:
+        ctx = replace(ctx, max_jobs=plugin.verify_max_jobs)
     verify_deferred = False
     try:
         listing = [] if browser else await verify_and_fetch(plugin.slug, credentials, ctx)

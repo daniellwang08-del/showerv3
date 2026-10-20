@@ -117,6 +117,9 @@ class JobSitePlugin:
     min_sync_hours: float = 6.0
     # Requests a key may ever make (trial keys with a lifetime quota). 0 means no cap.
     lifetime_request_cap: int = 0
+    # Jobs to ask for when checking a new key on connect, for APIs that bill per
+    # job or per detail call. 0 means the check is a full fetch.
+    verify_max_jobs: int = 0
 
     @property
     def connectable(self) -> bool:

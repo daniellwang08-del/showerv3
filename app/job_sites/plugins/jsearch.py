@@ -12,13 +12,15 @@ from app.job_sites.base import (
     FetchContext,
     JobSitePlugin,
 )
-from app.job_sites.http import get_json
+from app.job_sites.rapidapi import rapidapi_request, require_key
 from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
 
 DEFAULT_KEYWORDS = DEFAULT_SEARCH_KEYWORDS
+HOST = "jsearch.p.rapidapi.com"
 # The original /search endpoint was retired and now answers 404 "Endpoint '/search' does not exist".
-SEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
+SEARCH_PATH = "/search-v2"
+LISTING_URL = "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch"
 
 
 def search_country(ctx: FetchContext) -> str:
@@ -40,20 +42,18 @@ def search_query(credentials: dict[str, Any], ctx: FetchContext) -> str:
 
 
 async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJob]:
-    api_key = str(credentials.get("api_key") or "").strip()
-    if not api_key:
-        raise ValueError("JSearch requires a RapidAPI key.")
-    payload = await get_json(
-        SEARCH_URL,
+    payload = await rapidapi_request(
+        "GET",
+        HOST,
+        SEARCH_PATH,
+        api_key=require_key(credentials, "JSearch"),
+        api_name="JSearch",
+        listing_url=LISTING_URL,
         params={
             "query": search_query(credentials, ctx),
             "num_pages": "1",
             "date_posted": "week",
             "country": search_country(ctx),
-        },
-        headers={
-            "X-RapidAPI-Key": api_key,
-            "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
         },
     )
     jobs: list[BoardJob] = []

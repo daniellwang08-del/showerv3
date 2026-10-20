@@ -154,8 +154,8 @@ async def test_adzuna_keeps_cards_when_details_hit_a_bot_check(fake_html):
 async def test_jsearch_searches_the_users_keywords(monkeypatch):
     seen = {}
 
-    async def fake_get_json(url, params=None, headers=None, **_kw):
-        seen.update(url=url, params=params, headers=headers)
+    async def fake_request(method, host, path, *, api_key, params=None, **_kw):
+        seen.update(url=f"https://{host}{path}", params=params, api_key=api_key)
         return {
             "status": "OK",
             "data": {
@@ -173,12 +173,12 @@ async def test_jsearch_searches_the_users_keywords(monkeypatch):
             },
         }
 
-    monkeypatch.setattr(jsearch, "get_json", fake_get_json)
+    monkeypatch.setattr(jsearch, "rapidapi_request", fake_request)
     jobs = await jsearch._fetch({"api_key": "k", "keywords": "  senior   data engineer "}, FetchContext(country_codes=("CA",)))
     assert seen["url"] == "https://jsearch.p.rapidapi.com/search-v2"
     assert seen["params"]["query"] == "senior data engineer in Canada"
     assert seen["params"]["country"] == "ca"
-    assert seen["headers"]["X-RapidAPI-Key"] == "k"
+    assert seen["api_key"] == "k"
     assert [(j.title, j.company, j.location, j.description) for j in jobs] == [
         ("Data Engineer", "Acme", "Toronto, ON", "Build pipelines.")
     ]
@@ -250,9 +250,10 @@ def test_wttj_country_facet():
 def test_board_lists_only_working_sites():
     assert {p.slug for p in list_plugins()} == {
         "adzuna", "jobicy", "jobright", "jsearch", "remoterocketship", "welcometothejungle",
+        "linkedin", "careersites", "indeed", "glassdoor", "multiboard", "linkedinscraper",
     }
     assert all(p.connectable for p in list_plugins())
-    for slug in ("glassdoor", "remoteco", "remotive", "linkedin", "indeed"):
+    for slug in ("remoteco", "remotive", "remoteok", "themuse", "jooble"):
         assert get_plugin(slug) is None
 
 

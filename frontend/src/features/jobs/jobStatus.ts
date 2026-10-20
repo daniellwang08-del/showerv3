@@ -119,12 +119,18 @@ const SOURCE_NAMES: Record<string, string> = {
   otta: 'Otta',
   jsearch: 'JSearch',
   remoteco: 'Remote.co',
+  careersites: 'Career sites',
+  multiboard: 'Multi-board search',
+  linkedinscraper: 'LinkedIn',
 };
 
 /** Slugs that have `/integrations/job-sites/{slug}.svg` artwork. */
 const JOB_SITE_LOGO_SLUGS = new Set([
   'adzuna',
   'arbeitnow',
+  'careersites',
+  'linkedinscraper',
+  'multiboard',
   'glassdoor',
   'handshake',
   'indeed',
