@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ChevronsUpDown, LogOut, Moon, Puzzle, SlidersHorizontal, Sun, UserCircle } from 'lucide-react';
+import { ChevronsUpDown, Coins, LogOut, Moon, Sun } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -63,17 +63,9 @@ export function UserMenu({
         <DropdownMenuSeparator />
         {variant === 'applicant' ? (
           <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => navigate('/app/profile')}>
-              <UserCircle />
-              Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate('/app/preferences')}>
-              <SlidersHorizontal />
-              Preferences
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate('/app/integrations')}>
-              <Puzzle />
-              Integrations
+            <DropdownMenuItem onClick={() => navigate('/app/plans')}>
+              <Coins />
+              Plans
             </DropdownMenuItem>
           </DropdownMenuGroup>
         ) : null}

@@ -44,7 +44,7 @@ const InterviewsPage = named(() => import('./features/interviews/InterviewsPage'
 const SharedReportPage = named(() => import('./features/sharing/SharedReportPage'), 'SharedReportPage');
 const ReportPreviewPage = named(() => import('./features/sharing/SharedReportPage'), 'ReportPreviewPage');
 const SharedWithMePage = named(() => import('./features/sharing/SharedWithMePage'), 'SharedWithMePage');
-const BillingPage = named(() => import('./pages/BillingPage'), 'BillingPage');
+const PlansPage = named(() => import('./features/plans/PlansPage'), 'PlansPage');
 const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 'DocumentsPage');
 const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
 const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'), 'AdminDataPage');
@@ -516,7 +516,8 @@ function App() {
           />
           <Route path="preferences" element={<Page><PreferencesPage /></Page>} />
           <Route path="integrations" element={<Page><IntegrationsPage /></Page>} />
-          <Route path="billing" element={<Page legacy title="Billing"><BillingPage /></Page>} />
+          <Route path="plans" element={<Page><PlansPage /></Page>} />
+          <Route path="billing" element={<LegacyRedirect to="/app/plans" />} />
           <Route path="*" element={<Navigate to="/app" replace />} />
         </Route>
 
