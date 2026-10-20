@@ -51,6 +51,7 @@ const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 
 const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
 const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'), 'AdminDataPage');
 const AdminUsersPage = named(() => import('./features/admin/users/AdminUsersPage'), 'AdminUsersPage');
+const AdminPackagesPage = named(() => import('./features/admin/packages/AdminPackagesPage'), 'AdminPackagesPage');
 const AdminSystemPage = named(() => import('./features/admin/system/AdminSystemPage'), 'AdminSystemPage');
 const AdminLogsPage = named(() => import('./features/admin/logs/AdminLogsPage'), 'AdminLogsPage');
 const ExtensionConnectPage = named(
@@ -541,6 +542,7 @@ function App() {
           <Route index element={<Page><AdminPipelinePage /></Page>} />
           <Route path="data" element={<Page><AdminDataPage /></Page>} />
           <Route path="users" element={<Page><AdminUsersPage /></Page>} />
+          <Route path="packages" element={<Page><AdminPackagesPage /></Page>} />
           <Route path="shared" element={<Page title="Shared with me"><SharedWithMePage /></Page>} />
           <Route path="shared/:shareId" element={<Page title="Shared report"><SharedReportPage /></Page>} />
           <Route path="settings" element={<Page><AdminSystemPage /></Page>} />

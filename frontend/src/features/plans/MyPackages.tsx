@@ -100,7 +100,7 @@ export function MyPackages() {
           <ul className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {groups.map((group) => (
               <HeldCard
-                key={`${group.code}:${group.origin}`}
+                key={group.key}
                 pkg={group.first}
                 count={group.items.length}
                 busy={redeem.isPending}
@@ -185,6 +185,11 @@ function HeldCard({
         {team ? 'Opens one team space' : `${formatCount(pkg.credits)} credits`}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">{packageOrigin(pkg)}</p>
+      {pkg.note ? (
+        <p className="mt-1.5 line-clamp-2 border-l-2 border-brand/40 pl-2 text-xs text-foreground/80" title={pkg.note}>
+          {pkg.note}
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-wrap gap-2">
         {team ? (
           <Button size="sm" onClick={onTeam}>

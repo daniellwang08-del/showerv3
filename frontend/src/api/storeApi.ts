@@ -1,5 +1,16 @@
 import { apiClient } from './client';
-import type { AdminStoreSummary, LedgerEntry, PackageCode, StorePackage, StoreResponse } from '../types/store';
+import type {
+  AdminPackage,
+  AdminPackagePage,
+  AdminPackageStatus,
+  AdminStoreOverview,
+  AdminStoreSummary,
+  BulkGrantResult,
+  LedgerEntry,
+  PackageCode,
+  StorePackage,
+  StoreResponse,
+} from '../types/store';
 
 const pkg = (id: string) => `/store/packages/${encodeURIComponent(id)}`;
 const adminUser = (id: string) => `/store/admin/users/${encodeURIComponent(id)}`;
@@ -40,10 +51,47 @@ export async function adminGrant(
   userId: string,
   code: PackageCode,
   quantity: number,
+  note?: string,
 ): Promise<{ packages: StorePackage[]; summary: AdminStoreSummary }> {
   const { data } = await apiClient.post<{ packages: StorePackage[]; summary: AdminStoreSummary }>(
     `${adminUser(userId)}/grant`,
-    { code, quantity },
+    { code, quantity, note: note || null },
+  );
+  return data;
+}
+
+export async function fetchAdminStoreOverview(): Promise<AdminStoreOverview> {
+  const { data } = await apiClient.get<AdminStoreOverview>('/store/admin/overview');
+  return data;
+}
+
+export interface AdminPackageQuery {
+  status?: AdminPackageStatus;
+  code?: PackageCode;
+  source?: StorePackage['source'];
+  q?: string;
+  offset?: number;
+  limit?: number;
+}
+
+export async function fetchAdminPackages(params: AdminPackageQuery): Promise<AdminPackagePage> {
+  const { data } = await apiClient.get<AdminPackagePage>('/store/admin/packages', { params });
+  return data;
+}
+
+export async function adminBulkGrant(body: {
+  recipients: string[];
+  items: Array<{ code: PackageCode; quantity: number }>;
+  note?: string;
+}): Promise<BulkGrantResult> {
+  const { data } = await apiClient.post<BulkGrantResult>('/store/admin/grants', body);
+  return data;
+}
+
+export async function adminRevokePackage(id: string, reason?: string): Promise<AdminPackage> {
+  const { data } = await apiClient.post<AdminPackage>(
+    `/store/admin/packages/${encodeURIComponent(id)}/revoke`,
+    { reason: reason || null },
   );
   return data;
 }

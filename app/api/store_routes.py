@@ -22,6 +22,22 @@ class GiftRequest(BaseModel):
 class GrantRequest(BaseModel):
     code: str = Field(..., max_length=20)
     quantity: int = Field(default=1, ge=1, le=store_service.MAX_GRANT_QUANTITY)
+    note: str | None = Field(default=None, max_length=300)
+
+
+class GrantItem(BaseModel):
+    code: str = Field(..., max_length=20)
+    quantity: int = Field(default=1, ge=1, le=store_service.MAX_GRANT_QUANTITY)
+
+
+class BulkGrantRequest(BaseModel):
+    recipients: list[str] = Field(..., min_length=1, max_length=500)
+    items: list[GrantItem] = Field(..., min_length=1, max_length=len(store_service.CATALOG))
+    note: str | None = Field(default=None, max_length=300)
+
+
+class RevokeRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
 
 
 class AdjustRequest(BaseModel):
@@ -110,6 +126,57 @@ async def _target(session, user_id: str) -> User:
     return user
 
 
+@router.get("/admin/overview", dependencies=_admin)
+async def admin_overview():
+    async with get_session() as session:
+        return await store_service.admin_overview(session)
+
+
+@router.get("/admin/packages", dependencies=_admin)
+async def admin_packages(
+    status_filter: str | None = Query(None, alias="status", pattern="^(held|waiting|redeemed|revoked)$"),
+    code: str | None = Query(None, max_length=20),
+    source: str | None = Query(None, pattern="^(admin_grant|purchase|gift)$"),
+    q: str | None = Query(None, max_length=255),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+):
+    async with get_session() as session:
+        return await store_service.admin_packages(
+            session, status=status_filter, code=code, source=source, q=q, offset=offset, limit=limit
+        )
+
+
+@router.post("/admin/grants", dependencies=_admin)
+async def admin_bulk_grant(body: BulkGrantRequest, current_user: dict = Depends(get_current_user)):
+    async with get_session() as session:
+        try:
+            result = await store_service.grant_many(
+                session,
+                current_user["user_id"],
+                body.recipients,
+                [(i.code, i.quantity) for i in body.items],
+                body.note,
+            )
+        except store_service.StoreError as e:
+            raise _bad_request(e) from e
+        await session.commit()
+    return result
+
+
+@router.post("/admin/packages/{package_id}/revoke", dependencies=_admin)
+async def admin_revoke(package_id: str, body: RevokeRequest, current_user: dict = Depends(get_current_user)):
+    async with get_session() as session:
+        try:
+            data = await store_service.revoke(session, current_user["user_id"], package_id, body.reason)
+        except store_service.StoreError as e:
+            raise _bad_request(e) from e
+        except store_service.StoreNotFound as e:
+            raise _not_found() from e
+        await session.commit()
+    return data
+
+
 @router.get("/admin/users/{user_id}", dependencies=_admin)
 async def admin_user_store(user_id: str):
     async with get_session() as session:
@@ -121,7 +188,9 @@ async def admin_grant(user_id: str, body: GrantRequest, current_user: dict = Dep
     async with get_session() as session:
         target = await _target(session, user_id)
         try:
-            packages = await store_service.grant(session, current_user["user_id"], target, body.code, body.quantity)
+            packages = await store_service.grant(
+                session, current_user["user_id"], target, body.code, body.quantity, body.note
+            )
         except store_service.StoreError as e:
             raise _bad_request(e) from e
         await session.commit()

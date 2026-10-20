@@ -1199,14 +1199,19 @@ class UserPackage(Base):
     price_cents = Column(Integer, nullable=False, server_default="0")
     owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     owner_email = Column(String(255), nullable=True, index=True)
-    # held | redeemed
+    # held | redeemed | revoked
     status = Column(String(16), nullable=False, server_default="held")
     # admin_grant | purchase | gift
     source = Column(String(16), nullable=False, server_default="admin_grant")
     gifted_from_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     granted_by_user_id = Column(String(36), nullable=True)
+    # Admin message shown to the recipient with a granted package.
+    note = Column(String(300), nullable=True)
     redeemed_at = Column(DateTime, nullable=True)
     redeemed_ref = Column(String(36), nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by_user_id = Column(String(36), nullable=True)
+    revoke_reason = Column(String(300), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -5,7 +5,13 @@ export const TEAM_OVERVIEW_KEY = ['teams', 'overview'] as const;
 
 const ORDER: Record<string, number> = { team: 0, scale: 1, pro: 2, growth: 3, starter: 4 };
 
-export type HeldGroup = { code: StorePackage['code']; origin: string; first: StorePackage; items: StorePackage[] };
+export type HeldGroup = {
+  key: string;
+  code: StorePackage['code'];
+  origin: string;
+  first: StorePackage;
+  items: StorePackage[];
+};
 
 export function packageOrigin(pkg: StorePackage): string {
   if (pkg.source === 'gift') return `Gift from ${pkg.gifted_from?.name ?? 'another NAO user'}`;
@@ -13,15 +19,15 @@ export function packageOrigin(pkg: StorePackage): string {
   return 'Added by NAO';
 }
 
-/** Identical held packages from the same origin collapse into one card with a count. */
+/** Identical held packages from the same origin and note collapse into one card with a count. */
 export function groupHeld(held: StorePackage[]): HeldGroup[] {
   const groups = new Map<string, HeldGroup>();
   for (const pkg of held) {
     const origin = packageOrigin(pkg);
-    const key = `${pkg.code}:${origin}`;
+    const key = `${pkg.code}:${origin}:${pkg.note ?? ''}`;
     const group = groups.get(key);
     if (group) group.items.push(pkg);
-    else groups.set(key, { code: pkg.code, origin, first: pkg, items: [pkg] });
+    else groups.set(key, { key, code: pkg.code, origin, first: pkg, items: [pkg] });
   }
   return [...groups.values()].sort((a, b) => (ORDER[a.code] ?? 9) - (ORDER[b.code] ?? 9));
 }

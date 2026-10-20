@@ -192,6 +192,77 @@ def test_admin_grant_creates_one_held_package_per_unit():
     assert all(p["kind"] == "team" and p["status"] == "held" and p["price_cents"] == 2000 for p in out)
 
 
+def test_recipient_lists_are_split_deduplicated_and_checked():
+    emails, invalid = store_service.split_recipients(["A@x.io, b@x.io;\nnot-an-email", "a@x.io  <c@x.io>"])
+    assert emails == ["a@x.io", "b@x.io", "c@x.io"]
+    assert invalid == [{"email": "not-an-email", "reason": "Not a valid email address."}]
+
+
+def test_admins_and_disabled_accounts_are_skipped_but_new_emails_are_kept():
+    accounts = {
+        "lead@x.io": _user("u1", "lead@x.io"),
+        "boss@x.io": _user("u2", "boss@x.io", is_admin=True),
+        "gone@x.io": _user("u3", "gone@x.io", is_active=False),
+    }
+    targets, skipped = store_service.classify_recipients(
+        ["lead@x.io", "boss@x.io", "gone@x.io", "new@x.io"], accounts
+    )
+    assert [(t.email, t.user.id if t.user else None) for t in targets] == [("lead@x.io", "u1"), ("new@x.io", None)]
+    assert [s["email"] for s in skipped] == ["boss@x.io", "gone@x.io"]
+
+
+def test_bulk_grant_gives_every_recipient_the_whole_bundle():
+    session = _Session(_Result(rows=[_user("u1", "lead@x.io")]))
+    out = run(
+        store_service.grant_many(
+            session, "admin", ["lead@x.io", "new@x.io", "bad"], [("pro", 2), ("team", 1)], note="  Welcome   aboard "
+        )
+    )
+    assert out["total_packages"] == 6
+    assert [(g["email"], g["pending"], g["count"]) for g in out["granted"]] == [
+        ("lead@x.io", False, 3),
+        ("new@x.io", True, 3),
+    ]
+    assert out["skipped"] == [{"email": "bad", "reason": "Not a valid email address."}]
+    pending = [p for p in session.added if p.owner_user_id is None]
+    assert len(pending) == 3 and all(p.owner_email == "new@x.io" for p in pending)
+    assert {p.note for p in session.added} == {"Welcome aboard"}
+    assert all(p.source == "admin_grant" and p.granted_by_user_id == "admin" for p in session.added)
+
+
+def test_bulk_grant_needs_packages_and_someone_who_can_receive_them():
+    with pytest.raises(store_service.StoreError, match="at least one package"):
+        run(store_service.grant_many(_Session(), "admin", ["a@x.io"], []))
+    with pytest.raises(store_service.StoreError, match="Nobody on that list"):
+        run(store_service.grant_many(_Session(_Result(rows=[_user(is_admin=True)])), "admin", ["me@example.com"], [("pro", 1)]))
+    with pytest.raises(store_service.StoreError, match="between 1 and 20"):
+        run(store_service.grant_many(_Session(), "admin", ["a@x.io"], [("pro", 21)]))
+
+
+def test_only_unused_packages_can_be_revoked():
+    used = UserPackage(id="p1", code="pro", kind="credits", status="redeemed", owner_user_id="u1")
+    with pytest.raises(store_service.StoreError, match="already used"):
+        run(store_service.revoke(_Session(_Result(rowcount=0), objects={"p1": used}), "admin", "p1", None))
+    with pytest.raises(store_service.StoreNotFound):
+        run(store_service.revoke(_Session(), "admin", "missing", None))
+
+
+def test_revoking_a_held_package_reports_who_revoked_it():
+    pkg = UserPackage(
+        id="p1", code="pro", kind="credits", credits=1000, price_cents=8000, status="held",
+        source="admin_grant", owner_user_id="u1", granted_by_user_id="a1",
+    )
+    session = _Session(
+        _Result(rowcount=1),
+        _Result(rows=[_user("u1")]),
+        _Result(rows=[_user("a1", "admin@x.io", is_admin=True)]),
+        objects={"p1": pkg},
+    )
+    out = run(store_service.revoke(session, "a1", "p1", "Granted by mistake"))
+    assert out["id"] == "p1"
+    assert out["granted_by"]["email"] == "admin@x.io"
+
+
 # ── Team spaces ────────────────────────────────────────────────────────────
 
 

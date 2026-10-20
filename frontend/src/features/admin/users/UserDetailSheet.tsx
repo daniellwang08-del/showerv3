@@ -143,7 +143,7 @@ function SheetBody({
               title="Packages and credits"
               description="Payments are not live yet. Granted packages land in the user's store, where they add them to their balance or open a team space."
             >
-              <AdminStoreSection key={user.id} userId={user.id} />
+              <AdminStoreSection key={user.id} userId={user.id} email={user.email} />
             </Section>
           </>
         )}
