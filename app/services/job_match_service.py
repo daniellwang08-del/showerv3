@@ -375,6 +375,11 @@ def _parse_structured_job_section(parsed: dict) -> JobDescriptionSchema | None:
         work_mode = _normalize_work_mode(parsed.get("work_mode"))
         if work_mode == "unknown" and parsed.get("remote_policy"):
             work_mode = _normalize_work_mode(parsed.get("remote_policy"))
+        if work_mode == "unknown":
+            from app.services.work_mode_classifier import location_implies_onsite
+
+            if location_implies_onsite(clean_optional_job_field(parsed.get("location"))):
+                work_mode = "onsite"
 
         return JobDescriptionSchema(
             title=title,

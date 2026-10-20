@@ -198,6 +198,23 @@ def classify_work_mode_rules(
     return None
 
 
+_NOT_A_PLACE_RE = re.compile(r"(?i)\b(anywhere|worldwide|global(ly)?|multiple locations|various locations|flexible)\b")
+
+
+def location_implies_onsite(location: str | None) -> bool:
+    """A city-level location with no stated work mode means an onsite role.
+
+    Country-only locations ("United States") do not count: boards use them for
+    remote-in-country roles too.
+    """
+    from app.services.job_location_parse import location_specificity
+
+    text = (location or "").strip()
+    if not text or normalize_work_mode_display(text) or _NOT_A_PLACE_RE.search(text):
+        return False
+    return location_specificity(text) >= 3
+
+
 def classify_work_mode_vector(signal_text: str) -> tuple[WorkMode | None, dict[str, Any]]:
     """MiniLM prototype cosine. Returns (mode, explain)."""
     text = (signal_text or "").strip()
@@ -254,6 +271,10 @@ def classify_work_mode(
     )
     if rules:
         return rules, {"source": "rules", "mode": rules}
+
+    # Nothing in the posting states a work mode, but it names a city.
+    if location_implies_onsite(location):
+        return "onsite", {"source": "location", "mode": "onsite"}
 
     if not use_vector:
         return None, {"source": "rules", "mode": None}

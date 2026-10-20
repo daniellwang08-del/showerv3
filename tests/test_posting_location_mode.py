@@ -156,6 +156,38 @@ def test_run_on_page_text_is_not_a_location():
     assert meta["location_from_page"] is False
 
 
+def test_city_location_without_work_mode_is_onsite():
+    meta = build_metadata(plain_text="Title: Engineer\n\nBuild things.", structured_data={"location": "Austin, TX"})
+    assert meta["work_mode"] == "onsite"
+
+
+@pytest.mark.parametrize(
+    ("location", "body", "existing", "expected"),
+    [
+        ("United States", "Build things.", None, None),
+        ("Anywhere", "Build things.", None, None),
+        ("Austin, TX", "This role is fully remote.", None, "remote"),
+        ("Austin, TX", "Build things.", "remote", "remote"),
+    ],
+)
+def test_city_onsite_fallback_only_without_a_mode(location, body, existing, expected):
+    meta = build_metadata(
+        plain_text=f"Title: Engineer\n\n{body}",
+        structured_data={"location": location},
+        existing_work_mode=existing,
+    )
+    assert meta["work_mode"] == expected
+
+
+def test_llm_unknown_mode_with_city_is_onsite():
+    from app.services.job_match_service import _parse_structured_job_section
+
+    job = _parse_structured_job_section({"title": "Engineer", "description": "Build things.", "location": "Seattle, WA", "work_mode": "unknown"})
+    assert job.work_mode == "onsite"
+    job = _parse_structured_job_section({"title": "Engineer", "description": "Build things.", "location": "United States", "work_mode": "unknown"})
+    assert job.work_mode == "unknown"
+
+
 def test_declared_workplace_sets_work_mode():
     meta = build_metadata(
         plain_text="Title: Engineer\n\nBuild things in the office and at home.",

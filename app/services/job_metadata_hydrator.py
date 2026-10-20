@@ -591,6 +591,10 @@ def build_metadata(
         is_remote=is_remote_flag,
         use_vector=False,
     )
+    # A mode the job already carries (feed flag, earlier page) beats the
+    # "a city means onsite" fallback.
+    if _mode_explain.get("source") == "location" and normalize_work_mode_display(existing_work_mode):
+        work_mode = normalize_work_mode_display(existing_work_mode)
     if not work_mode:
         work_mode = resolve_display_work_mode(
             analysis_work_mode=normalize_work_mode_display(workplace)
