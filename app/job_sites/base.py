@@ -8,6 +8,9 @@ from typing import Any, Awaitable, Callable
 
 from app.services.job_source_boards import BoardJob
 
+# Pre-filled in every board's keywords input, and searched when the field is left empty.
+DEFAULT_SEARCH_KEYWORDS = "remote senior software engineer"
+
 
 class AuthType(StrEnum):
     """How a user connects this site."""
@@ -28,6 +31,7 @@ class CredentialField:
     secret: bool = True
     required: bool = True
     help_text: str = ""
+    default: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,7 @@ class JobSitePlugin:
                     "secret": f.secret,
                     "required": f.required,
                     "help_text": f.help_text or None,
+                    "default": f.default or None,
                 }
                 for f in self.credential_fields
             ],

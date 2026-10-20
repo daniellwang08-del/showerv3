@@ -17,6 +17,8 @@ export interface JobSiteCredentialField {
   /** Absent on older catalogs; treat as required. */
   required?: boolean;
   help_text?: string | null;
+  /** Pre-filled value for a new connection; saved settings replace it. */
+  default?: string | null;
 }
 
 export interface JobSiteSessionCapture {

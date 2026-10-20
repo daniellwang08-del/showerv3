@@ -89,13 +89,18 @@ export function JobSiteSheet({
       />
     );
   } else {
-    const savedSettings = connection
-      ? Object.fromEntries(
-          Object.entries(connection.credential_hints ?? {}).filter(([key]) =>
-            plugin.credential_fields.some((f) => f.key === key && !f.secret),
-          ),
-        )
-      : undefined;
+    const savedSettings = {
+      ...Object.fromEntries(
+        plugin.credential_fields.filter((f) => f.default).map((f) => [f.key, f.default as string]),
+      ),
+      ...(connection
+        ? Object.fromEntries(
+            Object.entries(connection.credential_hints ?? {}).filter(([key]) =>
+              plugin.credential_fields.some((f) => f.key === key && !f.secret),
+            ),
+          )
+        : {}),
+    };
     body = (
       <>
         <ConnectFlow key={plugin.slug} plugin={plugin} onConnected={onConnected} initialValues={savedSettings} />

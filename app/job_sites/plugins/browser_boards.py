@@ -5,10 +5,17 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote_plus, urlparse
 
-from app.job_sites.base import AuthType, BrowserSync, CredentialField, FetchContext, JobSitePlugin
+from app.job_sites.base import (
+    DEFAULT_SEARCH_KEYWORDS,
+    AuthType,
+    BrowserSync,
+    CredentialField,
+    FetchContext,
+    JobSitePlugin,
+)
 from app.job_sites.registry import register
 
-DEFAULT_KEYWORDS = "software engineer"
+DEFAULT_KEYWORDS = DEFAULT_SEARCH_KEYWORDS
 GLASSDOOR = "https://www.glassdoor.com"
 REMOTE_CO = "https://remote.co"
 REMOTE_CO_DEFAULT_CATEGORIES = ("developer", "software-engineer", "it")
@@ -62,10 +69,11 @@ register(
             CredentialField(
                 key="keywords",
                 label="Search keywords",
-                placeholder="software engineer",
+                placeholder=DEFAULT_SEARCH_KEYWORDS,
+                default=DEFAULT_SEARCH_KEYWORDS,
                 secret=False,
                 required=False,
-                help_text="Jobs posted in the last 3 days. Leave empty to search for software engineer roles.",
+                help_text="Jobs posted in the last 3 days. Leave empty to search for remote senior software engineer roles.",
             ),
             CredentialField(
                 key="search_url",

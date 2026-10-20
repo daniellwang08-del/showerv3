@@ -14,7 +14,7 @@ from html import unescape
 from typing import Any
 
 from app.core.logging import get_logger
-from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
+from app.job_sites.base import DEFAULT_SEARCH_KEYWORDS, AuthType, CredentialField, FetchContext, JobSitePlugin
 from app.job_sites.errors import RateLimited
 from app.job_sites.html_fetch import BotChallenge, HtmlSession, html_to_text
 from app.job_sites.registry import register
@@ -22,7 +22,7 @@ from app.services.job_source_boards import BoardJob
 
 logger = get_logger(__name__)
 
-DEFAULT_KEYWORDS = "software engineer"
+DEFAULT_KEYWORDS = DEFAULT_SEARCH_KEYWORDS
 MAX_JOBS = 20
 PAGE_SIZE = 10
 DETAIL_DELAY_SECONDS = 1.5
@@ -160,12 +160,13 @@ register(
             CredentialField(
                 key="keywords",
                 label="Search keywords",
-                placeholder="software engineer",
+                placeholder=DEFAULT_SEARCH_KEYWORDS,
+                default=DEFAULT_SEARCH_KEYWORDS,
                 secret=False,
                 required=False,
                 help_text=(
                     "What you would type into Adzuna's search box. Jobs come from Adzuna's site "
-                    "for your preferred country. Leave empty to search for software engineer roles."
+                    "for your preferred country. Leave empty to search for remote senior software engineer roles."
                 ),
             ),
         ),

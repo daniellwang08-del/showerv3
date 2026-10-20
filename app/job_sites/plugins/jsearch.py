@@ -6,6 +6,7 @@ from typing import Any
 
 from app.job_sites.base import (
     COUNTRY_NAMES,
+    DEFAULT_SEARCH_KEYWORDS,
     AuthType,
     CredentialField,
     FetchContext,
@@ -15,7 +16,7 @@ from app.job_sites.http import get_json
 from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
 
-DEFAULT_KEYWORDS = "software engineer"
+DEFAULT_KEYWORDS = DEFAULT_SEARCH_KEYWORDS
 # The original /search endpoint was retired and now answers 404 "Endpoint '/search' does not exist".
 SEARCH_URL = "https://jsearch.p.rapidapi.com/search-v2"
 
@@ -98,12 +99,13 @@ register(
             CredentialField(
                 key="keywords",
                 label="Search keywords",
-                placeholder="software engineer",
+                placeholder=DEFAULT_SEARCH_KEYWORDS,
+                default=DEFAULT_SEARCH_KEYWORDS,
                 secret=False,
                 required=False,
                 help_text=(
                     "The job title or skills to search for. Jobs come from your preferred country. "
-                    "Leave empty to search for software engineer roles."
+                    "Leave empty to search for remote senior software engineer roles."
                 ),
             ),
         ),

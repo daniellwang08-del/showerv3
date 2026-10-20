@@ -181,12 +181,19 @@ async def test_jsearch_searches_the_users_keywords(monkeypatch):
     assert [(j.title, j.company, j.location, j.description) for j in jobs] == [
         ("Data Engineer", "Acme", "Toronto, ON", "Build pipelines.")
     ]
-    assert jsearch.search_query({}, FetchContext()) == "software engineer in United States"
+    assert jsearch.search_query({}, FetchContext()) == "remote senior software engineer in United States"
     assert jsearch.search_country(FetchContext(country_codes=("UK",))) == "gb"
     assert jsearch.result_items({"data": [{"job_title": "old shape"}]}) == [{"job_title": "old shape"}]
     plugin = get_plugin("jsearch")
     assert plugin.settings_from({"api_key": "k", "keywords": "ml engineer"}) == {"keywords": "ml engineer"}
     assert sync.credential_hints("jsearch", {"api_key": "abcdefghijkl", "keywords": "ml engineer"})["keywords"] == "ml engineer"
+
+
+def test_keyword_boards_prefill_the_default_search():
+    for slug in ("jsearch", "adzuna", "welcometothejungle", "glassdoor"):
+        fields = {f["key"]: f for f in get_plugin(slug).catalog_dict()["credential_fields"]}
+        assert fields["keywords"]["default"] == "remote senior software engineer", slug
+    assert get_plugin("jsearch").catalog_dict()["credential_fields"][0]["default"] is None
 
 
 def test_curl_http_errors_get_a_readable_reason():
@@ -251,7 +258,7 @@ def test_browser_plugins_in_catalog():
 def test_glassdoor_start_urls():
     ctx = FetchContext()
     assert browser_boards.glassdoor_start_urls({}, ctx) == [
-        "https://www.glassdoor.com/Job/jobs.htm?sc.keyword=software+engineer&fromAge=3"
+        "https://www.glassdoor.com/Job/jobs.htm?sc.keyword=remote+senior+software+engineer&fromAge=3"
     ]
     assert browser_boards.glassdoor_start_urls({"keywords": "data & ml"}, ctx) == [
         "https://www.glassdoor.com/Job/jobs.htm?sc.keyword=data+%26+ml&fromAge=3"

@@ -436,6 +436,38 @@ describe('IntegrationsPage, job sites', () => {
     );
   });
 
+  it('pre-fills the default search keywords on a new connection', async () => {
+    const user = userEvent.setup();
+    db.plugins.push(
+      makePlugin({
+        slug: 'publicfeed',
+        name: 'Public Feed',
+        sort_order: 0,
+        credential_fields: [
+          {
+            key: 'keywords',
+            label: 'Search keywords',
+            placeholder: '',
+            help_url: null,
+            secret: false,
+            required: false,
+            default: 'remote senior software engineer',
+          },
+        ],
+      }),
+    );
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Connect Public Feed' }));
+    const sheet = await screen.findByRole('dialog');
+    expect(within(sheet).getByLabelText(/Search keywords/)).toHaveValue('remote senior software engineer');
+    await user.click(within(sheet).getByRole('button', { name: 'Enable' }));
+    await waitFor(() =>
+      expect(api.connectJobSite).toHaveBeenCalledWith('publicfeed', {
+        credentials: { keywords: 'remote senior software engineer' },
+      }),
+    );
+  });
+
   describe('browser-synced boards', () => {
     const glassdoor = makePlugin({
       slug: 'glassdoor',

@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from app.core.logging import get_logger
-from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
+from app.job_sites.base import DEFAULT_SEARCH_KEYWORDS, AuthType, CredentialField, FetchContext, JobSitePlugin
 from app.job_sites.html_fetch import html_to_text
 from app.job_sites.http import get_json, post_json
 from app.job_sites.registry import register
@@ -27,7 +27,7 @@ ALGOLIA_APP_ID = "CSEKHVMS53"
 ALGOLIA_API_KEY = "4bd8f6215d0cc52b26430765769e65a0"
 ALGOLIA_URL = f"https://{ALGOLIA_APP_ID.lower()}-dsn.algolia.net/1/indexes/wttj_jobs_production_en/query"
 API_BASE = "https://api.welcometothejungle.com/api/v1"
-DEFAULT_KEYWORDS = "software engineer"
+DEFAULT_KEYWORDS = DEFAULT_SEARCH_KEYWORDS
 MAX_JOBS = 25
 DETAIL_CONCURRENCY = 4
 
@@ -141,12 +141,13 @@ register(
             CredentialField(
                 key="keywords",
                 label="Search keywords",
-                placeholder="software engineer",
+                placeholder=DEFAULT_SEARCH_KEYWORDS,
+                default=DEFAULT_SEARCH_KEYWORDS,
                 secret=False,
                 required=False,
                 help_text=(
                     "Jobs whose offices are in your preferred country. Leave empty to search for "
-                    "software engineer roles."
+                    "remote senior software engineer roles."
                 ),
             ),
         ),
