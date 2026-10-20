@@ -1,3 +1,15 @@
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleDashed,
+  ClipboardCheck,
+  FileSearch,
+  FileText,
+  Gauge,
+  Rocket,
+  Sparkles,
+  type LucideIcon,
+} from 'lucide-react';
 import type { DashboardJob } from '@/types/scraper';
 import { dashboardJobMarkedApplied } from '@/utils/appliedStatus';
 
@@ -62,16 +74,17 @@ export function jobStage(job: DashboardJob): JobStage {
   return 'new';
 }
 
-export const STAGE_META: Record<JobStage, { label: string; tone: string; pulse?: boolean }> = {
-  applied: { label: 'Applied', tone: 'bg-status-applied' },
-  ready: { label: 'Ready', tone: 'bg-status-ready' },
-  documents: { label: 'Writing documents', tone: 'bg-status-preparing', pulse: true },
-  matching: { label: 'Matching', tone: 'bg-status-new', pulse: true },
-  scored: { label: 'Scored', tone: 'bg-status-new' },
-  jd_ready: { label: 'JD ready', tone: 'bg-status-preparing' },
-  extracting: { label: 'Reading posting', tone: 'bg-status-preparing', pulse: true },
-  failed: { label: 'Extraction failed', tone: 'bg-status-failed' },
-  new: { label: 'New', tone: 'bg-muted-foreground/40' },
+/** Each stage gets its own glyph so rows are told apart by shape, not only by colour. */
+export const STAGE_META: Record<JobStage, { label: string; text: string; icon: LucideIcon; pulse?: boolean }> = {
+  applied: { label: 'Applied', text: 'text-status-applied', icon: CircleCheck },
+  ready: { label: 'Ready', text: 'text-status-ready', icon: Rocket },
+  documents: { label: 'Writing documents', text: 'text-status-preparing', icon: FileText, pulse: true },
+  matching: { label: 'Matching', text: 'text-status-new', icon: Sparkles, pulse: true },
+  scored: { label: 'Scored', text: 'text-status-new', icon: Gauge },
+  jd_ready: { label: 'JD ready', text: 'text-status-preparing', icon: ClipboardCheck },
+  extracting: { label: 'Reading posting', text: 'text-status-preparing', icon: FileSearch, pulse: true },
+  failed: { label: 'Extraction failed', text: 'text-status-failed', icon: CircleAlert },
+  new: { label: 'New', text: 'text-muted-foreground', icon: CircleDashed },
 };
 
 export function workMode(job: DashboardJob): 'remote' | 'hybrid' | 'onsite' | null {

@@ -473,7 +473,7 @@ function Cell({
             'rounded-md px-1.5 py-0.5 text-xs font-medium capitalize',
             mode === 'remote' && 'bg-match-strong/12 text-match-strong',
             mode === 'hybrid' && 'bg-match-fair/15 text-match-fair',
-            mode === 'onsite' && 'bg-muted text-muted-foreground',
+            mode === 'onsite' && 'bg-destructive/10 text-destructive',
           )}
         >
           {mode === 'onsite' ? 'On-site' : mode}
@@ -505,12 +505,10 @@ function Cell({
       return <DocsCell job={job} onPreview={onPreviewDoc} />;
     case 'status': {
       const meta = STAGE_META[jobStage(job)];
+      const Icon = meta.icon;
       return (
-        <span className="inline-flex min-w-0 items-center gap-2 text-xs">
-          <span className="relative flex size-2 shrink-0">
-            {meta.pulse && <span className={cn('absolute inset-0 animate-ping rounded-full opacity-60', meta.tone)} />}
-            <span className={cn('relative size-2 rounded-full', meta.tone)} />
-          </span>
+        <span className="inline-flex min-w-0 items-center gap-1.5 text-xs">
+          <Icon aria-hidden className={cn('size-3.5 shrink-0', meta.text, meta.pulse && 'animate-pulse')} />
           <span className="truncate">{meta.label}</span>
         </span>
       );
