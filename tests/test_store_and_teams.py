@@ -367,3 +367,112 @@ def test_locked_member_cannot_reshare_a_batch(monkeypatch):
     monkeypatch.setattr(team_service, "locked_share_scope", locked)
     with pytest.raises(ValueError, match="team lead"):
         run(job_add_batches.update_share(_Session(), "u1", "b1", share_scope="all"))
+
+
+# ── Lead insights ──────────────────────────────────────────────────────────
+
+
+def test_lead_can_view_only_members_of_their_own_spaces():
+    assert run(team_service.lead_can_view(_Session(_Result(scalar="m1")), "lead", "u2")) is True
+    assert run(team_service.lead_can_view(_Session(_Result(scalar=None)), "lead", "u2")) is False
+
+
+def _patch_access(monkeypatch, allowed):
+    from contextlib import asynccontextmanager
+
+    from app.api import team_access
+
+    calls = []
+
+    @asynccontextmanager
+    async def session_cm():
+        yield _Session()
+
+    async def can_view(_session, lead_id, member_id):
+        calls.append((lead_id, member_id))
+        return allowed
+
+    monkeypatch.setattr(team_access, "get_session", session_cm)
+    monkeypatch.setattr(team_service, "lead_can_view", can_view)
+    return team_access, calls
+
+
+def test_insights_default_to_the_viewer_without_a_lookup(monkeypatch):
+    team_access, calls = _patch_access(monkeypatch, allowed=False)
+    assert run(team_access.insights_subject("lead", None)) == "lead"
+    assert run(team_access.insights_subject("lead", "lead")) == "lead"
+    assert calls == []
+
+
+def test_a_lead_reads_their_member_and_anyone_else_gets_404(monkeypatch):
+    from fastapi import HTTPException
+
+    team_access, _ = _patch_access(monkeypatch, allowed=True)
+    assert run(team_access.insights_subject("lead", "u2")) == "u2"
+
+    team_access, _ = _patch_access(monkeypatch, allowed=False)
+    with pytest.raises(HTTPException) as err:
+        run(team_access.insights_subject("stranger", "u2"))
+    assert err.value.status_code == 404
+
+
+def test_team_insights_are_for_the_lead_only():
+    space = TeamSpace(id="s1", public_id="nao-00000001", name="T", owner_user_id="lead")
+    with pytest.raises(team_service.TeamNotFound):
+        run(team_service.team_insights(_Session(objects={"s1": space}), _user("intruder"), "s1", 30, None))
+
+
+def test_team_insights_bucket_member_activity_by_local_day(monkeypatch):
+    from datetime import datetime
+
+    space = TeamSpace(id="s1", public_id="nao-00000001", name="Growth", owner_user_id="lead")
+    member = TeamMember(user_id="u2", team_space_id="s1")
+    pat = _user("u2", "pat@example.com")
+    now = datetime(2026, 10, 20, 15, 0)
+    monkeypatch.setattr(team_service, "utcnow", lambda: now)
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now.replace(tzinfo=tz) if tz else now
+
+    monkeypatch.setattr(team_service, "datetime", _Frozen)
+    session = _Session(
+        _Result(rows=[(member, pat)]),
+        # Job adds: one today, one from 3:00 UTC which is yesterday evening in New York.
+        _Result(rows=[("u2", datetime(2026, 10, 20, 14, 0), 4), ("u2", datetime(2026, 10, 20, 3, 0), 2)]),
+        _Result(rows=[("u2", datetime(2026, 10, 20, 13, 0))]),
+        _Result(rows=[("u2", datetime(2026, 10, 18, 13, 0))]),
+        _Result(rows=[("u2", datetime(2026, 10, 19, 16, 0))]),
+        # Window stats: adds, marks, outside applications, active processes, upcoming interviews.
+        _Result(rows=[]),
+        _Result(rows=[]),
+        _Result(rows=[]),
+        _Result(rows=[("u2", 1, datetime(2026, 10, 20, 12, 0))]),
+        _Result(rows=[("u2", 2)]),
+        objects={"s1": space},
+    )
+    data = run(team_service.team_insights(session, _user("lead"), "s1", 7, "America/New_York"))
+
+    assert data["days"] == 7
+    assert data["dates"][-1] == "2026-10-20"
+    series = data["members"][0]["series"]
+    assert series["added"][-1] == 4 and series["added"][-2] == 2
+    assert series["applied"][-1] == 1 and series["applied"][-3] == 1
+    assert series["interviews"][-2] == 1
+    totals = data["totals"]
+    assert totals == {
+        "members": 1,
+        "active_members": 1,
+        "jobs_added": 6,
+        "applied": 2,
+        "interview_updates": 1,
+        "active_interviews": 1,
+        "upcoming_interviews": 2,
+    }
+
+
+def test_team_insights_fall_back_to_thirty_days_for_unknown_ranges():
+    space = TeamSpace(id="s1", public_id="nao-00000001", name="T", owner_user_id="lead")
+    data = run(team_service.team_insights(_Session(_Result(rows=[]), objects={"s1": space}), _user("lead"), "s1", 45, None))
+    assert data["days"] == 30 and len(data["dates"]) == 30 and data["members"] == []

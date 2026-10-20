@@ -8,6 +8,7 @@ import {
   BriefcaseBusiness,
   CalendarClock,
   ClipboardCheck,
+  Crown,
   Lock,
   LockOpen,
   MailPlus,
@@ -60,6 +61,7 @@ import type { TeamMemberRow, TeamSpaceDetail, TeamSpaceSummary } from '@/types/t
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { relativeAgo } from '../interviews/interviewsModel';
 import { shortDate } from '../plans/storeModel';
+import { memberInsightsPath } from '../insights/insightsSubject';
 import { TeamIdBadge } from './TeamIdBadge';
 import {
   activityTone,
@@ -127,7 +129,7 @@ function SpaceView({ detail }: { detail: TeamSpaceDetail }) {
       </div>
       <MembersCard spaceId={space.id} members={members} days={days} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <ActivityCard spaceId={space.id} hasMembers={members.length > 0} />
+        <TeamActivityCard spaceId={space.id} hasMembers={members.length > 0} />
         <div className="space-y-4">
           <InviteCard spaceId={space.id} invites={invites} />
           <PolicyCard space={space} />
@@ -154,7 +156,10 @@ function SpaceHeader({ space }: { space: TeamSpaceSummary }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-card/90 px-5 py-4 shadow-xs">
       <div className="min-w-0">
-        <p className="text-xs font-medium text-muted-foreground">You lead</p>
+        <p className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+          <Crown className="size-3.5" fill="currentColor" aria-hidden />
+          You lead
+        </p>
         <h2 className="truncate text-lg font-semibold">{space.name}</h2>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <TeamIdBadge publicId={space.public_id} />
@@ -381,6 +386,13 @@ function MemberRow({ spaceId, member, onRemove }: { spaceId: string; member: Tea
       </div>
       <div className="col-span-2 flex justify-end gap-1 lg:col-span-1">
         <Link
+          to={memberInsightsPath(member.id)}
+          className={buttonVariants({ variant: 'outline', size: 'xs' })}
+          aria-label={`Open ${member.name}'s insights`}
+        >
+          <Activity /> Insights
+        </Link>
+        <Link
           to={`/app/team/${encodeURIComponent(spaceId)}/members/${encodeURIComponent(member.id)}`}
           className={buttonVariants({ variant: 'outline', size: 'xs' })}
           aria-label={`Open ${member.name}'s report`}
@@ -542,7 +554,7 @@ function PolicyCard({ space }: { space: TeamSpaceSummary }) {
   );
 }
 
-function ActivityCard({ spaceId, hasMembers }: { spaceId: string; hasMembers: boolean }) {
+export function TeamActivityCard({ spaceId, hasMembers }: { spaceId: string; hasMembers: boolean }) {
   const query = useQuery({
     queryKey: teamActivityKey(spaceId),
     queryFn: () => fetchTeamActivity(spaceId),

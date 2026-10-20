@@ -889,11 +889,15 @@ _STATS_CACHE = AsyncTTLCache(ttl=8.0)
 async def get_scraper_stats(
     user=Depends(_get_current_user),
     timezone: str | None = Query(None, description="IANA timezone for today's counts (browser local time)"),
+    member_id: str | None = Query(None, max_length=64, description="A team member the caller leads"),
 ):
     """Aggregate statistics aligned with the user's jobs dashboard."""
+    from app.api.team_access import insights_subject
+
     user_id = user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    user_id = await insights_subject(user_id, member_id)
     return await _STATS_CACHE.get_or_compute(
         ("user", user_id, timezone or ""),
         lambda: _compute_scraper_stats(user_id, timezone),

@@ -500,8 +500,10 @@ async def leave(session: AsyncSession, user: User) -> None:
 # ── Monitoring ─────────────────────────────────────────────────────────────
 
 
-async def _member_stats(session: AsyncSession, user_ids: list[str]) -> dict[str, dict[str, Any]]:
-    since = utcnow() - timedelta(days=STATS_DAYS)
+async def _member_stats(
+    session: AsyncSession, user_ids: list[str], days: int = STATS_DAYS
+) -> dict[str, dict[str, Any]]:
+    since = utcnow() - timedelta(days=days)
     now = utcnow()
     stats: dict[str, dict[str, Any]] = {
         uid: {"jobs_added": 0, "applied": 0, "active_interviews": 0, "upcoming_interviews": 0, "last_active_at": None}
@@ -726,4 +728,144 @@ async def member_report(
         "share": None,
         "report": report,
         "team": {"id": space.id, "public_id": space.public_id, "name": space.name},
+    }
+
+
+async def lead_can_view(session: AsyncSession, lead_id: str, member_user_id: str) -> bool:
+    """True when ``member_user_id`` belongs to a space ``lead_id`` owns."""
+    row = await session.execute(
+        select(TeamMember.id)
+        .join(TeamSpace, TeamSpace.id == TeamMember.team_space_id)
+        .where(TeamSpace.owner_user_id == lead_id, TeamMember.user_id == member_user_id)
+        .limit(1)
+    )
+    return row.scalar_one_or_none() is not None
+
+
+INSIGHT_RANGES = (7, 14, 30, 90)
+
+
+def _zone(tz_name: str | None):
+    from zoneinfo import ZoneInfo
+
+    try:
+        return ZoneInfo(tz_name or "UTC")
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+async def team_insights(
+    session: AsyncSession, lead: User, space_id: str, days: int, tz_name: str | None
+) -> dict[str, Any]:
+    """Per-member totals and daily progress across one space, for the lead's Insights view."""
+    from datetime import timezone as _tz
+
+    if days not in INSIGHT_RANGES:
+        days = STATS_DAYS
+    space = await _owned_space(session, lead.id, space_id)
+    rows = (
+        await session.execute(
+            select(TeamMember, User)
+            .join(User, User.id == TeamMember.user_id)
+            .where(TeamMember.team_space_id == space.id)
+            .order_by(TeamMember.joined_at)
+        )
+    ).all()
+    ids = [user.id for _, user in rows]
+    zone = _zone(tz_name)
+    today = datetime.now(_tz.utc).astimezone(zone).date()
+    dates = [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+    index = {d: i for i, d in enumerate(dates)}
+    since = utcnow() - timedelta(days=days + 1)
+
+    series: dict[str, dict[str, list[int]]] = {
+        uid: {"added": [0] * days, "applied": [0] * days, "interviews": [0] * days} for uid in ids
+    }
+
+    def put(uid: str, when: datetime | None, key: str, n: int = 1) -> None:
+        if not when or uid not in series:
+            return
+        local = when.replace(tzinfo=_tz.utc).astimezone(zone).date()
+        slot = index.get(local)
+        if slot is not None:
+            series[uid][key][slot] += n
+
+    if ids:
+        for uid, when, n in (
+            await session.execute(
+                select(JobAddBatch.user_id, JobAddBatch.created_at, JobAddBatch.job_count).where(
+                    JobAddBatch.user_id.in_(ids), JobAddBatch.created_at >= since
+                )
+            )
+        ).all():
+            put(uid, when, "added", int(n or 0))
+        for uid, when in (
+            await session.execute(
+                select(ValidJobUserApplication.user_id, ValidJobUserApplication.applied_at).where(
+                    ValidJobUserApplication.user_id.in_(ids), ValidJobUserApplication.applied_at >= since
+                )
+            )
+        ).all():
+            put(uid, when, "applied")
+        for uid, when in (
+            await session.execute(
+                select(MailApplication.user_id, MailApplication.applied_at).where(
+                    MailApplication.user_id.in_(ids),
+                    MailApplication.applied_at >= since,
+                    MailApplication.job_id.is_(None),
+                )
+            )
+        ).all():
+            put(uid, when, "applied")
+        for uid, when in (
+            await session.execute(
+                select(InterviewEvent.user_id, func.coalesce(InterviewEvent.email_date, InterviewEvent.created_at)).where(
+                    InterviewEvent.user_id.in_(ids),
+                    InterviewEvent.created_at >= since,
+                    InterviewEvent.ignored_at.is_(None),
+                )
+            )
+        ).all():
+            put(uid, when, "interviews")
+
+    stats = await _member_stats(session, ids, days)
+    members = []
+    for member, user in rows:
+        s = series[user.id]
+        members.append(
+            {
+                **_person(user),
+                "headline": user.profile_title or None,
+                "joined_at": _iso(member.joined_at),
+                "stats": {
+                    **stats[user.id],
+                    "jobs_added": sum(s["added"]),
+                    "applied": sum(s["applied"]),
+                    "interview_updates": sum(s["interviews"]),
+                },
+                "series": s,
+            }
+        )
+    window_start = utcnow() - timedelta(days=days)
+    active = sum(
+        1
+        for m in members
+        if m["stats"]["last_active_at"]
+        and datetime.fromisoformat(m["stats"]["last_active_at"].rstrip("Z")) >= window_start
+    )
+    totals = {
+        "members": len(members),
+        "active_members": active,
+        "jobs_added": sum(m["stats"]["jobs_added"] for m in members),
+        "applied": sum(m["stats"]["applied"] for m in members),
+        "interview_updates": sum(m["stats"]["interview_updates"] for m in members),
+        "active_interviews": sum(m["stats"]["active_interviews"] for m in members),
+        "upcoming_interviews": sum(m["stats"]["upcoming_interviews"] for m in members),
+    }
+    return {
+        "space": {"id": space.id, "public_id": space.public_id, "name": space.name},
+        "days": days,
+        "dates": [d.isoformat() for d in dates],
+        "members": members,
+        "totals": totals,
     }

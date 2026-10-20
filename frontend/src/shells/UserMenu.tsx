@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ChevronsUpDown, Coins, LogOut, Moon, Sun, UsersRound } from 'lucide-react';
+import { ChevronsUpDown, Coins, LogOut, Moon, Sun } from 'lucide-react';
 import { fetchStore } from '@/api/storeApi';
-import { fetchTeamOverview } from '@/api/teamApi';
-import { STORE_KEY, TEAM_OVERVIEW_KEY } from '@/features/plans/storeModel';
+import { STORE_KEY } from '@/features/plans/storeModel';
+import { LeadCrown } from '@/features/team/LeadCrown';
+import { useIsTeamLead } from '@/features/team/useTeamOverview';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -23,8 +24,6 @@ const credits = new Intl.NumberFormat('en-US');
 
 function ApplicantItems({ onNavigate }: { onNavigate: (to: string) => void }) {
   const store = useQuery({ queryKey: STORE_KEY, queryFn: fetchStore, staleTime: 5 * 60_000 });
-  const team = useQuery({ queryKey: TEAM_OVERVIEW_KEY, queryFn: fetchTeamOverview, staleTime: 5 * 60_000 });
-  const invites = team.data?.invites.length ?? 0;
   return (
     <DropdownMenuGroup>
       <DropdownMenuItem onClick={() => onNavigate('/app/plans')}>
@@ -32,15 +31,6 @@ function ApplicantItems({ onNavigate }: { onNavigate: (to: string) => void }) {
         Plans
         {store.data ? (
           <span className="ml-auto text-xs text-muted-foreground tabular-nums">{credits.format(store.data.balance)} credits</span>
-        ) : null}
-      </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => onNavigate('/app/team')}>
-        <UsersRound />
-        Team
-        {invites ? (
-          <span className="ml-auto rounded-full bg-brand px-1.5 text-[11px] font-semibold text-brand-foreground tabular-nums">
-            {invites}
-          </span>
         ) : null}
       </DropdownMenuItem>
     </DropdownMenuGroup>
@@ -63,6 +53,7 @@ export function UserMenu({
   const toggleTheme = useThemeStore((s) => s.toggleTheme);
   const displayName = user.name || user.email || 'Account';
   const initial = displayName.charAt(0).toUpperCase();
+  const isLead = useIsTeamLead(variant === 'applicant');
 
   return (
     <DropdownMenu>
@@ -71,15 +62,25 @@ export function UserMenu({
           'flex h-11 w-full items-center gap-2.5 rounded-lg px-1.5 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50 data-[popup-open]:bg-sidebar-accent',
           collapsed && 'justify-center px-0',
         )}
-        aria-label="Account menu"
+        aria-label={isLead ? 'Account menu, team lead' : 'Account menu'}
       >
-        <Avatar className="size-8">
-          <AvatarFallback className="bg-brand text-xs font-semibold text-brand-foreground">{initial}</AvatarFallback>
-        </Avatar>
+        <span className="relative shrink-0">
+          <Avatar className={cn('size-8', isLead && 'ring-2 ring-amber-400/70 ring-offset-1 ring-offset-sidebar')}>
+            <AvatarFallback className="bg-brand text-xs font-semibold text-brand-foreground">{initial}</AvatarFallback>
+          </Avatar>
+          {isLead ? <LeadCrown /> : null}
+        </span>
         {!collapsed && (
           <>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{displayName}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="truncate text-sm font-medium">{displayName}</span>
+                {isLead ? (
+                  <span className="shrink-0 rounded-full bg-amber-400/15 px-1.5 py-px text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                    Lead
+                  </span>
+                ) : null}
+              </span>
               {user.email && user.email !== displayName ? (
                 <span className="block truncate text-xs text-muted-foreground">{user.email}</span>
               ) : null}

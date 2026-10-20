@@ -59,7 +59,6 @@ export function TeamPage() {
     <PageLayout
       title="Team"
       description="Team spaces bring a group search together. The lead invites members, sets how their jobs are shared, and follows their progress."
-      width="wide"
       variant="hero"
       icon={UsersRound}
     >

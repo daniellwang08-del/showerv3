@@ -14,6 +14,7 @@ import {
   SlidersHorizontal,
   UserCircle,
   Users,
+  UsersRound,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -24,6 +25,8 @@ export type NavItem = {
   /** Exact match for index routes so `/app` is not active on every child. */
   end?: boolean;
   keywords?: string[];
+  /** Hidden until someone has shared something with the user. */
+  needsIncomingShares?: boolean;
 };
 
 export type NavSection = { label?: string; items: NavItem[] };
@@ -39,7 +42,19 @@ export const applicantNav: NavSection[] = [
         icon: CalendarClock,
         keywords: ['interviews', 'schedule', 'mail', 'email', 'pipeline', 'calendar'],
       },
-      { to: '/app/shared', label: 'Shared with me', icon: Users, keywords: ['shared', 'reports', 'team', 'coach', 'friend'] },
+      {
+        to: '/app/team',
+        label: 'Team',
+        icon: UsersRound,
+        keywords: ['team space', 'lead', 'members', 'invites', 'nao id'],
+      },
+      {
+        to: '/app/shared',
+        label: 'Shared with me',
+        icon: Users,
+        keywords: ['shared', 'reports', 'coach', 'friend'],
+        needsIncomingShares: true,
+      },
       { to: '/app/analysis', label: 'Insights', icon: BarChart3, keywords: ['analysis', 'pipeline', 'trends'] },
       { to: '/app/documents', label: 'Documents', icon: FileText, keywords: ['resume', 'cover letter', 'tailor', 'downloads'] },
       { to: '/app/studio', label: 'Resume studio', icon: LayoutTemplate, keywords: ['builder', 'template', 'design', 'theme'] },
@@ -67,7 +82,13 @@ export const adminNav: NavSection[] = [
         icon: PackageOpen,
         keywords: ['credits', 'grant', 'gift', 'team plan', 'store', 'billing'],
       },
-      { to: '/admin/shared', label: 'Shared with me', icon: Share2, keywords: ['shared', 'reports', 'interviews'] },
+      {
+        to: '/admin/shared',
+        label: 'Shared with me',
+        icon: Share2,
+        keywords: ['shared', 'reports', 'interviews'],
+        needsIncomingShares: true,
+      },
     ],
   },
   {

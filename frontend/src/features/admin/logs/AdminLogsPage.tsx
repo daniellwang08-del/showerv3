@@ -205,8 +205,7 @@ export function AdminLogsPage({ standalone = false }: { standalone?: boolean }) 
       title={standalone ? 'NAO system logs' : 'Logs'}
       description="Request/response lifecycle, worker tasks, and process events across the platform."
       actions={<div className="flex flex-wrap items-center gap-2">{actions}</div>}
-      width="wide"
-      className={cn(standalone && 'max-w-7xl pb-8')}
+      className={cn(standalone && 'pb-8')}
     >
       <div className="space-y-4">
         {list.isError ? (

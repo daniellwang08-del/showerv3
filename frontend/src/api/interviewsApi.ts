@@ -22,9 +22,13 @@ export async function disconnectMail(): Promise<void> {
   await apiClient.delete('/mail/config');
 }
 
-export async function fetchMailApplications(days: number, timezone: string): Promise<MailApplicationsOverview> {
+export async function fetchMailApplications(
+  days: number,
+  timezone: string,
+  memberId?: string,
+): Promise<MailApplicationsOverview> {
   const { data } = await apiClient.get<MailApplicationsOverview>('/interviews/applications', {
-    params: { days, timezone },
+    params: memberId ? { days, timezone, member_id: memberId } : { days, timezone },
   });
   return data;
 }

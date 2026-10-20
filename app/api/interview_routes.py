@@ -119,14 +119,24 @@ async def get_interviews(current_user: dict = Depends(get_current_user)):
 async def get_mail_applications(
     days: int = Query(30, ge=1, le=31),
     timezone_name: str | None = Query(None, alias="timezone", max_length=64),
+    member_id: str | None = Query(None, max_length=64),
     current_user: dict = Depends(get_current_user),
 ):
-    """Applications counted from confirmation emails, for the Insights chart."""
-    user_id = current_user["user_id"]
+    """Applications counted from confirmation emails, for the Insights chart.
+
+    A team lead may pass ``member_id`` to read one of their members; links into
+    the member's mailbox are left out because only the member can open them.
+    """
+    from app.api.team_access import insights_subject
+
+    viewer_id = current_user["user_id"]
+    user_id = await insights_subject(viewer_id, member_id)
     async with get_session() as session:
         conn = await nylas_service.get_connection(session, user_id)
         data = await mail_applications.overview(session, user_id, conn, tz_name=timezone_name, days=days)
     data["server"] = nylas_service.server_status()
+    if user_id != viewer_id:
+        data["recent"] = [{**app, "email_url": None} for app in data.get("recent") or []]
     return data
 
 

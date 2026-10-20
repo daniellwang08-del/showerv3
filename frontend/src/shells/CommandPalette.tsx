@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Briefcase, Coins, LogOut, MessageSquare, Moon, Sparkles, SquarePen, Sun, UsersRound } from 'lucide-react';
+import { Briefcase, Coins, LogOut, MessageSquare, Moon, Sparkles, SquarePen, Sun } from 'lucide-react';
 import {
   CommandDialog,
   Command,
@@ -18,6 +18,7 @@ import { useAgentStore } from '@/stores/agentStore';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
 import type { NavSection } from './nav';
+import { useVisibleNav } from './useVisibleNav';
 
 export function CommandPalette({
   nav,
@@ -40,6 +41,7 @@ export function CommandPalette({
   const openJob = useOpenJob();
   const [query, setQuery] = useState('');
   const isApplicant = variant === 'applicant';
+  const sections = useVisibleNav(nav);
 
   const run = (fn: () => void) => {
     setOpen(false);
@@ -61,7 +63,7 @@ export function CommandPalette({
           <CommandEmpty>No results.</CommandEmpty>
 
 
-          {nav.map((section, i) => (
+          {sections.map((section, i) => (
             <CommandGroup key={section.label ?? i} heading={i === 0 ? 'Go to' : section.label}>
               {section.items.map((item) => (
                 <CommandItem
@@ -103,13 +105,6 @@ export function CommandPalette({
                 >
                   <Coins />
                   Plans and credits
-                </CommandItem>
-                <CommandItem
-                  value="team space members invite lead"
-                  onSelect={() => run(() => navigate('/app/team'))}
-                >
-                  <UsersRound />
-                  Team
                 </CommandItem>
               </>
             ) : null}

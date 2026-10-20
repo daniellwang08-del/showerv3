@@ -13,6 +13,8 @@ import { useOpenJob } from '@/features/jobs/useOpenJob';
 import { JobAddHistory } from '@/features/jobs/JobAddHistory';
 import { usePendingSignupCount } from '@/features/admin/users/signupRequests';
 import { JOBS_PATH, newJobsBadgeText, useNewJobsBadge } from '@/features/jobs/useNewJobsBadge';
+import { useTeamOverview } from '@/features/team/useTeamOverview';
+import { useVisibleNav } from './useVisibleNav';
 
 type NavBadge = { count: number; text: string; label: string; tone: 'solid' | 'soft' };
 
@@ -52,7 +54,15 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const isApplicant = variant === 'applicant';
   const pendingSignups = usePendingSignupCount(variant === 'admin');
   const newJobs = useNewJobsBadge(isApplicant);
+  const teamInvites = useTeamOverview(isApplicant).data?.invites.length ?? 0;
+  const sections = useVisibleNav(nav);
   const navBadges: Record<string, NavBadge> = {
+    '/app/team': {
+      count: teamInvites,
+      text: String(teamInvites),
+      label: `${teamInvites} team invitation${teamInvites === 1 ? '' : 's'}`,
+      tone: 'solid',
+    },
     '/admin/users': {
       count: pendingSignups,
       text: String(pendingSignups),
@@ -130,7 +140,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
       </div>
 
       <nav className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-2 pb-3" aria-label="Main">
-        {nav.map((section, idx) => (
+        {sections.map((section, idx) => (
           <div key={section.label ?? idx} className={cn(idx > 0 && 'mt-4')}>
             {section.label && !collapsed ? (
               <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">{section.label}</p>

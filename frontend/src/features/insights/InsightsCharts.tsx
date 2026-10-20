@@ -20,6 +20,8 @@ export type ChartSeries<K extends string> = {
   label: string;
   color: string;
   kind: 'bar' | 'area' | 'line';
+  /** Bars sharing a stack id are drawn on top of each other. */
+  stack?: string;
 };
 export type TrendSeries = ChartSeries<keyof Omit<TrendRow, 'day'>>;
 export type ActivitySeries = ChartSeries<keyof Omit<ActivityRow, 'day' | 'date'>>;
@@ -111,7 +113,8 @@ function SeriesChart<Row extends { day: string }, K extends string>({
                 dataKey={s.key}
                 name={s.label}
                 fill={`url(#${id}-${s.key})`}
-                radius={[5, 5, 1, 1]}
+                stackId={s.stack}
+                radius={s.stack ? 0 : [5, 5, 1, 1]}
                 maxBarSize={dense ? 14 : 26}
                 isAnimationActive={false}
               />
@@ -169,6 +172,20 @@ export function ApplicationsChart({
   height?: number;
 }) {
   return <SeriesChart id="inbox-applications" data={data} series={series} height={height} />;
+}
+
+export type TeamChartRow = { day: string } & Record<string, string | number>;
+
+export function TeamChart({
+  data,
+  series,
+  height = 280,
+}: {
+  data: TeamChartRow[];
+  series: ChartSeries<string>[];
+  height?: number;
+}) {
+  return <SeriesChart id="team-progress" data={data} series={series} height={height} />;
 }
 
 export const MATCH_COLORS: Record<MatchSlice['key'], string> = {

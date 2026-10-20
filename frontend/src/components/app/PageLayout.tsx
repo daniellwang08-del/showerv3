@@ -4,13 +4,15 @@ import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { cn } from '@/lib/utils';
 import { PageTitle } from './PageTitle';
 
-/** Scrollable page body with the standard content width. */
+/** Shared page padding for every in-app page, including ones that build their own header. */
+export const PAGE_BODY = 'w-full px-4 pt-6 pb-24 sm:px-6 lg:px-8';
+
+/** Scrollable page body that uses the full width beside the sidebar. */
 export function PageLayout({
   title,
   description,
   actions,
   children,
-  width = 'default',
   className,
   variant = 'plain',
   icon,
@@ -20,7 +22,6 @@ export function PageLayout({
   description?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
-  width?: 'narrow' | 'default' | 'wide' | 'full';
   className?: string;
   /** `hero` adds the ambient backdrop and an aurora header card. */
   variant?: 'plain' | 'hero';
@@ -35,16 +36,7 @@ export function PageLayout({
   const body = (
     <div className="scrollbar-thin min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
       <PageTitle title={title} />
-      <div
-        className={cn(
-          'mx-auto w-full px-4 pt-6 pb-24 sm:px-6',
-          width === 'narrow' && 'max-w-2xl',
-          width === 'default' && 'max-w-4xl',
-          width === 'wide' && 'max-w-6xl',
-          width === 'full' && 'max-w-none lg:px-8',
-          className,
-        )}
-      >
+      <div className={cn(PAGE_BODY, className)}>
         {hero ? (
           <header
             className={cn(

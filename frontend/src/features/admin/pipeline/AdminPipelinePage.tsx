@@ -327,7 +327,6 @@ export function AdminPipelinePage() {
     <PageLayout
       title="Jobs pipeline"
       description="Fetch listings, auto-extract job descriptions, and track the live JD backlog."
-      width="wide"
       className="max-w-[96rem]"
       actions={
         <>

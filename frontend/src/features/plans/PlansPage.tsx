@@ -114,7 +114,6 @@ export function PlansPage() {
     <PageLayout
       title="Plans"
       description="Pay for the jobs NAO prepares, nothing else. One credit takes one job from match to ready-to-apply."
-      width="wide"
       variant="hero"
       icon={Coins}
       meta={meta}

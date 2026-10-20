@@ -76,7 +76,6 @@ export function AdminSystemPage() {
     <PageLayout
       title="System settings"
       description="Platform defaults, LLM providers and keys, job sync, match engine, and worker ops."
-      width="wide"
     >
       {failed ? (
         <QueryError

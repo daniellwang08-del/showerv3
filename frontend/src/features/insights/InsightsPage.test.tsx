@@ -5,7 +5,9 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fetchMailApplications, syncInterviews } from '@/api/interviewsApi';
 import { fetchScraperStats, fetchWeeklyProgress } from '@/api/scraperApi';
+import { fetchTeamInsights, fetchTeamOverview, fetchTeamSpace } from '@/api/teamApi';
 import type { MailApplicationsOverview } from '@/types/interviews';
+import type { TeamInsights, TeamMemberRow, TeamSpaceSummary } from '@/types/team';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
 import { emptyStats, makeStats } from './insightsFixtures';
@@ -29,6 +31,7 @@ vi.mock('./InsightsCharts', () => {
     ActivityChart: chart('activity-chart'),
     TrendChart: chart('trend-chart'),
     ApplicationsChart: chart('applications-chart'),
+    TeamChart: chart('team-chart'),
     MatchDonut: ({ avg }: { avg: number }) => <div data-testid="match-donut">{avg}</div>,
   };
 });
@@ -38,12 +41,97 @@ vi.mock('@/api/interviewsApi', () => ({
   syncInterviews: vi.fn(async () => ({ started: true })),
 }));
 
+vi.mock('@/api/teamApi', () => ({
+  fetchTeamOverview: vi.fn(),
+  fetchTeamSpace: vi.fn(),
+  fetchTeamInsights: vi.fn(),
+  fetchTeamActivity: vi.fn(async () => ({ items: [], days: 14 })),
+}));
+
 vi.mock('sonner', () => ({ toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), message: vi.fn() }) }));
 
 const fetchStats = vi.mocked(fetchScraperStats);
 const fetchProgress = vi.mocked(fetchWeeklyProgress);
 const fetchInbox = vi.mocked(fetchMailApplications);
 const startSync = vi.mocked(syncInterviews);
+const fetchOverview = vi.mocked(fetchTeamOverview);
+const fetchSpace = vi.mocked(fetchTeamSpace);
+const fetchInsights = vi.mocked(fetchTeamInsights);
+
+const SPACE: TeamSpaceSummary = {
+  id: 's1',
+  public_id: 'nao-12345678',
+  name: 'Growth squad',
+  lead: { id: 'lead', name: 'Lee Lead', email: 'lead@example.com' },
+  member_count: 2,
+  pending_invites: 0,
+  default_share_scope: null,
+  default_share_locked: false,
+  created_at: '2026-10-01T00:00:00Z',
+};
+
+const memberStats = (applied: number, added: number) => ({
+  jobs_added: added,
+  applied,
+  active_interviews: 1,
+  upcoming_interviews: 0,
+  last_active_at: '2026-10-19T12:00:00Z',
+});
+
+const MEMBERS: TeamMemberRow[] = [
+  {
+    id: 'u2',
+    name: 'Pat Lee',
+    email: 'pat@example.com',
+    headline: 'Data Engineer',
+    joined_at: '2026-10-02T00:00:00Z',
+    share_default: 'team',
+    share_locked: false,
+    stats: memberStats(6, 20),
+  },
+  {
+    id: 'u3',
+    name: 'Sam Roe',
+    email: 'sam@example.com',
+    headline: null,
+    joined_at: '2026-10-03T00:00:00Z',
+    share_default: 'private',
+    share_locked: false,
+    stats: memberStats(2, 5),
+  },
+];
+
+function leadOf(members: TeamMemberRow[] = MEMBERS) {
+  fetchOverview.mockResolvedValue({ owned: [SPACE], membership: null, invites: [], team_packages_held: 0 });
+  fetchSpace.mockResolvedValue({ space: SPACE, members, invites: [], stats_days: 30 });
+}
+
+function teamInsights(): TeamInsights {
+  const dates = ['2026-10-18', '2026-10-19', '2026-10-20'];
+  return {
+    space: { id: 's1', public_id: SPACE.public_id, name: SPACE.name },
+    days: 30,
+    dates,
+    members: MEMBERS.map((m, i) => ({
+      id: m.id,
+      name: m.name,
+      email: m.email,
+      headline: m.headline,
+      joined_at: m.joined_at,
+      stats: { ...m.stats, interview_updates: i + 1 },
+      series: { added: [1, 2, 3], applied: i === 0 ? [1, 2, 3] : [0, 1, 1], interviews: [0, 0, i + 1] },
+    })),
+    totals: {
+      members: 2,
+      active_members: 2,
+      jobs_added: 25,
+      applied: 8,
+      interview_updates: 3,
+      active_interviews: 2,
+      upcoming_interviews: 0,
+    },
+  };
+}
 
 function inbox(overrides: Partial<MailApplicationsOverview> = {}): MailApplicationsOverview {
   return {
@@ -96,11 +184,11 @@ function progress(days: number) {
   };
 }
 
-function renderPage() {
+function renderPage(entry = '/app/insights') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={['/app/insights']}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/app/insights" element={<InsightsPage />} />
           <Route path="/app/jobs" element={<div>Jobs page</div>} />
@@ -118,6 +206,11 @@ describe('InsightsPage', () => {
     fetchInbox.mockReset();
     fetchInbox.mockResolvedValue(inbox({ connected: false, connection: null }));
     startSync.mockClear();
+    fetchOverview.mockReset();
+    fetchOverview.mockResolvedValue({ owned: [], membership: null, invites: [], team_packages_held: 0 });
+    fetchSpace.mockReset();
+    fetchInsights.mockReset();
+    fetchInsights.mockResolvedValue(teamInsights());
     applyAgentDashboard = vi.fn();
     useScraperStore.setState({ applyAgentDashboard } as never);
   });
@@ -284,5 +377,78 @@ describe('InsightsPage', () => {
     await user.click(within(alert).getByRole('button', { name: 'Retry' }));
     expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument();
     expect(fetchStats).toHaveBeenCalledTimes(2);
+  });
+
+  describe('team lead views', () => {
+    it('hides the picker for anyone who leads no team', async () => {
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage();
+      await screen.findByRole('region', { name: 'Today' });
+      await waitFor(() => expect(fetchOverview).toHaveBeenCalled());
+      expect(screen.queryByRole('combobox', { name: 'Show insights for' })).not.toBeInTheDocument();
+    });
+
+    it('lets a lead pick a member and shows their numbers read only', async () => {
+      const user = userEvent.setup();
+      leadOf();
+      fetchStats.mockResolvedValue(makeStats());
+      fetchInbox.mockResolvedValue(
+        inbox({
+          connection: { ...inbox().connection!, email: 'pat@gmail.com' },
+          recent: inbox().recent.map((r) => ({ ...r, email_url: null })),
+        }),
+      );
+      renderPage();
+      await user.click(await screen.findByRole('combobox', { name: 'Show insights for' }));
+      await user.click(await screen.findByRole('option', { name: /Pat Lee/ }));
+
+      expect(await screen.findByRole('group', { name: 'Viewing Pat Lee' })).toBeInTheDocument();
+      await waitFor(() => expect(fetchStats).toHaveBeenCalledWith('u2'));
+      expect(fetchProgress).toHaveBeenLastCalledWith(7, 'u2');
+      expect(fetchInbox).toHaveBeenCalledWith(30, expect.any(String), 'u2');
+
+      const today = await screen.findByRole('region', { name: 'Today' });
+      expect(within(today).queryAllByRole('button')).toHaveLength(0);
+      const card = await screen.findByRole('region', { name: "Applications from Pat Lee's inbox" });
+      await within(card).findByTestId('applications-chart');
+      expect(within(card).queryByRole('button', { name: 'Sync inbox now' })).not.toBeInTheDocument();
+      expect(within(card).queryByRole('link')).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Full report/ })).toHaveAttribute('href', '/app/team/s1/members/u2');
+
+      await user.click(screen.getByRole('button', { name: /Back to you/ }));
+      expect(screen.queryByRole('group', { name: 'Viewing Pat Lee' })).not.toBeInTheDocument();
+    });
+
+    it('opens the whole-team view from the link and drills into a member', async () => {
+      const user = userEvent.setup();
+      leadOf();
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage('/app/insights?view=team:s1');
+
+      const totals = await screen.findByRole('region', { name: 'Team totals' });
+      expect(within(totals).getByText('2 of 2')).toBeInTheDocument();
+      expect(within(totals).getByText('25')).toBeInTheDocument();
+      expect(fetchInsights).toHaveBeenCalledWith('s1', 30);
+
+      const progressCard = screen.getByRole('region', { name: 'Team progress' });
+      expect(await within(progressCard).findByTestId('team-chart')).toHaveTextContent('Pat Lee / Sam Roe');
+      await user.click(within(progressCard).getByRole('tab', { name: '90 days' }));
+      await waitFor(() => expect(fetchInsights).toHaveBeenLastCalledWith('s1', 90));
+
+      const rows = within(screen.getByRole('region', { name: 'Member comparison' })).getAllByRole('listitem');
+      expect(rows[0]).toHaveTextContent('Pat Lee');
+      await user.click(screen.getByRole('button', { name: "View Sam Roe's insights" }));
+      expect(await screen.findByRole('group', { name: 'Viewing Sam Roe' })).toBeInTheDocument();
+      await waitFor(() => expect(fetchStats).toHaveBeenCalledWith('u3'));
+    });
+
+    it('falls back to your own insights for a member you do not lead', async () => {
+      leadOf();
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage('/app/insights?view=member:stranger');
+      expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument();
+      expect(screen.queryByRole('group', { name: /Viewing/ })).not.toBeInTheDocument();
+      expect(fetchStats).not.toHaveBeenCalledWith('stranger');
+    });
   });
 });

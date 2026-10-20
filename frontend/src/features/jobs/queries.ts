@@ -9,8 +9,13 @@ export const jobKeys = {
   list: (params: Record<string, unknown>) => ['jobs', 'list', params] as const,
 };
 
-export function useJobStats() {
-  return useQuery({ queryKey: jobKeys.stats(), queryFn: fetchScraperStats, staleTime: 60_000 });
+/** `memberId` reads a member of a team space the caller leads. */
+export function useJobStats(memberId?: string) {
+  return useQuery({
+    queryKey: memberId ? [...jobKeys.stats(), 'member', memberId] : jobKeys.stats(),
+    queryFn: () => fetchScraperStats(memberId),
+    staleTime: 60_000,
+  });
 }
 
 export function useJobList(params: {

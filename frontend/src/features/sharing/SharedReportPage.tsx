@@ -215,7 +215,6 @@ export function SharedReportView({
                 : 'A live view of interviews and applications.'}
           </>
         }
-        width="full"
         variant="hero"
         icon={BriefcaseBusiness}
         meta={meta}

@@ -31,21 +31,24 @@ const SERIES: ApplicationsSeries[] = [
   { key: 'average', label: '7-day average', color: 'var(--chart-1)', kind: 'line' },
 ];
 
-export function useMailApplications(days: number) {
+/** `memberId` reads a member of a team space the caller leads. */
+export function useMailApplications(days: number, memberId?: string) {
   return useQuery({
-    queryKey: [...MAIL_APPLICATIONS_KEY, days],
-    queryFn: () => fetchMailApplications(days, browserTimezone()),
+    queryKey: memberId ? [...MAIL_APPLICATIONS_KEY, days, 'member', memberId] : [...MAIL_APPLICATIONS_KEY, days],
+    queryFn: () => (memberId ? fetchMailApplications(days, browserTimezone(), memberId) : fetchMailApplications(days, browserTimezone())),
     staleTime: 30_000,
     refetchInterval: (q) => (q.state.data?.connection?.sync_status === 'running' ? 3000 : false),
   });
 }
 
-export function InboxApplicationsCard() {
+/** With `member`, a read-only view of a team member's inbox applications for their lead. */
+export function InboxApplicationsCard({ member }: { member?: { id: string; name: string } } = {}) {
   const qc = useQueryClient();
   const [days, setDays] = useState<ApplicationRange>(30);
-  const query = useMailApplications(days);
+  const query = useMailApplications(days, member?.id);
   const data = query.data;
   const conn = data?.connection ?? null;
+  const readOnly = !!member;
 
   const sync = useMutation({
     mutationFn: () => syncInterviews(browserTimezone()),
@@ -59,51 +62,56 @@ export function InboxApplicationsCard() {
   const status = conn?.sync_status;
   const prevStatus = useRef(status);
   useEffect(() => {
-    if (prevStatus.current === 'running' && status && status !== 'running') {
+    if (!readOnly && prevStatus.current === 'running' && status && status !== 'running') {
       if (status === 'error') toast.error(conn?.last_sync_error || 'Sync failed.');
       else toast.success(syncDoneMessage(conn?.last_sync_stats));
       void qc.invalidateQueries({ queryKey: INTERVIEWS_KEY });
       void qc.invalidateQueries({ queryKey: ['jobs'] });
     }
     prevStatus.current = status;
-  }, [status, conn?.last_sync_error, conn?.last_sync_stats, qc]);
+  }, [readOnly, status, conn?.last_sync_error, conn?.last_sync_stats, qc]);
 
   const syncing = sync.isPending || status === 'running';
   const rows = buildApplicationRows(data);
   const peak = busiestDay(rows);
   const syncedExact = exactDateTime(conn?.last_synced_at);
   const syncedAgo = relativeAgo(conn?.last_synced_at);
+  const title = member ? `Applications from ${member.name}'s inbox` : 'Applications from your inbox';
 
   return (
     <section
-      aria-label="Applications from your inbox"
+      aria-label={title}
       className="jobs-summary-card min-w-0 rounded-2xl border bg-card/85 shadow-xs backdrop-blur-sm"
     >
       <div className="flex flex-wrap items-start justify-between gap-3 px-5 pt-4">
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
             <MailCheck className="size-4 text-status-applied" aria-hidden />
-            Applications from your inbox
+            {title}
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {conn
               ? `Counted from application confirmation emails in ${conn.email}.`
-              : 'Every "thanks for applying" email counts, even for jobs you applied to outside NAO.'}
+              : readOnly
+                ? 'Counted from application confirmation emails once they connect an inbox.'
+                : 'Every "thanks for applying" email counts, even for jobs you applied to outside NAO.'}
           </p>
         </div>
         {conn ? (
           <div className="flex flex-wrap items-center gap-2">
             <RangeTabs value={days} onChange={setDays} />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => sync.mutate()}
-              disabled={syncing || conn.status === 'needs_reauth'}
-              aria-label={syncing ? 'Syncing inbox' : 'Sync inbox now'}
-            >
-              <RefreshCw className={cn(syncing && 'animate-spin')} />
-              {syncing ? 'Syncing...' : 'Sync now'}
-            </Button>
+            {readOnly ? null : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => sync.mutate()}
+                disabled={syncing || conn.status === 'needs_reauth'}
+                aria-label={syncing ? 'Syncing inbox' : 'Sync inbox now'}
+              >
+                <RefreshCw className={cn(syncing && 'animate-spin')} />
+                {syncing ? 'Syncing...' : 'Sync now'}
+              </Button>
+            )}
           </div>
         ) : null}
       </div>
@@ -115,17 +123,30 @@ export function InboxApplicationsCard() {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
             <span className="flex items-center gap-2">
               <AlertCircle className="size-4 text-destructive" aria-hidden />
-              Could not load your inbox applications.
+              {readOnly ? 'Could not load their inbox applications.' : 'Could not load your inbox applications.'}
             </span>
             <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
               Retry
             </Button>
           </div>
         ) : !conn ? (
-          <ConnectPrompt configured={data.server.server_configured} />
+          member ? (
+            <div className="flex flex-col items-center rounded-xl border border-dashed bg-background/40 px-6 py-10 text-center">
+              <span className="flex size-11 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <Inbox className="size-5" aria-hidden />
+              </span>
+              <p className="mt-3 text-sm font-medium">{member.name} has not connected an inbox</p>
+              <p className="mt-1 max-w-md text-xs text-muted-foreground">
+                Applications they send outside NAO appear here once they connect their email on the Interviews page.
+              </p>
+            </div>
+          ) : (
+            <ConnectPrompt configured={data.server.server_configured} />
+          )
         ) : (
           <>
             <SyncStatus
+              readOnly={readOnly}
               syncing={syncing}
               progress={
                 status === 'running' && conn.last_sync_stats?.candidates
@@ -194,6 +215,7 @@ function RangeTabs({ value, onChange }: { value: ApplicationRange; onChange: (d:
 }
 
 function SyncStatus({
+  readOnly,
   syncing,
   progress,
   exact,
@@ -201,6 +223,7 @@ function SyncStatus({
   error,
   needsReauth,
 }: {
+  readOnly: boolean;
   syncing: boolean;
   progress: string | null;
   exact: string | null;
@@ -219,10 +242,12 @@ function SyncStatus({
       {syncing ? (
         <span className="flex items-center gap-1.5 font-medium text-brand">
           <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          {progress ? `Syncing your inbox: ${progress}` : 'Syncing your inbox...'}
+          {readOnly ? 'Syncing their inbox...' : progress ? `Syncing your inbox: ${progress}` : 'Syncing your inbox...'}
         </span>
       ) : null}
-      {needsReauth ? (
+      {needsReauth && readOnly ? (
+        <span>Their email connection expired. Counts resume when they reconnect.</span>
+      ) : needsReauth ? (
         <span>
           Your email connection expired.{' '}
           <Link to="/app/interviews" className="font-medium underline">

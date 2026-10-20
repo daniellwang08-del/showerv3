@@ -197,7 +197,6 @@ export function InterviewsPage() {
     <PageLayout
       title="Interviews"
       description="Every interview, stage and next step across your applications, kept up to date from your email."
-      width="full"
       variant="hero"
       icon={CalendarClock}
       meta={meta}

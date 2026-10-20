@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
+import { PAGE_BODY } from '@/components/app/PageLayout';
 import { PageTitle } from '@/components/app/PageTitle';
 import { ConfirmDialog } from '@/components/extraction/ConfirmDialog';
 import { ResumePdfEmbed } from '@/components/resumeBuilder/ResumePdfEmbed';
@@ -308,7 +309,7 @@ export function DocumentsPage() {
 
       <div className="scrollbar-thin min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
         <PageTitle title="Documents" />
-        <div className="mx-auto w-full max-w-6xl space-y-6 px-4 pt-6 pb-24 sm:px-6">
+        <div className={cn(PAGE_BODY, 'space-y-6')}>
           <header
             className={cn(
               'jobs-hero relative isolate overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs',

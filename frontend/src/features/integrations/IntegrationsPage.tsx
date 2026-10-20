@@ -115,7 +115,6 @@ export function IntegrationsPage() {
     <PageLayout
       title="Integrations"
       description="Connect job boards and the destinations matching jobs are posted to."
-      width="wide"
       variant="hero"
       icon={PlugZap}
       meta={meta}

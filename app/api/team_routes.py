@@ -141,6 +141,22 @@ async def space_activity(space_id: str, current_user: dict = Depends(get_current
             raise _not_found() from e
 
 
+@router.get("/{space_id}/insights")
+async def space_insights(
+    space_id: str,
+    days: int = Query(team_service.STATS_DAYS, ge=1, le=90),
+    timezone_name: str | None = Query(None, alias="timezone", max_length=64),
+    current_user: dict = Depends(get_current_user),
+):
+    async with get_session() as session:
+        try:
+            return await team_service.team_insights(
+                session, await _me(session, current_user), space_id, days, timezone_name
+            )
+        except team_service.TeamNotFound as e:
+            raise _not_found() from e
+
+
 @router.post("/{space_id}/invites", status_code=status.HTTP_201_CREATED)
 async def invite_members(space_id: str, body: InviteRequest, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:

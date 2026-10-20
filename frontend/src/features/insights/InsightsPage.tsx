@@ -1,12 +1,14 @@
 import { lazy, Suspense, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertCircle,
+  ArrowLeft,
   BarChart3,
   CalendarDays,
   ChevronRight,
   ClipboardCheck,
+  FileBarChart,
   Gauge,
   Layers,
   type LucideIcon,
@@ -20,19 +22,34 @@ import {
   UserRound,
   Wifi,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { PAGE_BODY } from '@/components/app/PageLayout';
 import { PageTitle } from '@/components/app/PageTitle';
 import { fetchWeeklyProgress } from '@/api/scraperApi';
 import { useJobStats } from '@/features/jobs/queries';
 import { relativeTime } from '@/features/integrations/status';
+import { relativeAgo } from '@/features/interviews/interviewsModel';
+import { TEAM_KEY, teamActivityKey } from '@/features/team/teamModel';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
 import { cn } from '@/lib/utils';
 import type { ScraperStats } from '@/types/scraper';
 import { InboxApplicationsCard, useMailApplications } from './InboxApplicationsCard';
+import {
+  ME,
+  parseSubject,
+  resolveSubject,
+  SUBJECT_PARAM,
+  subjectValue,
+  useLeadRoster,
+  type InsightsSubject,
+  type RosterMember,
+} from './insightsSubject';
+import { MemberAvatar, SubjectPicker } from './SubjectPicker';
+import { TeamInsightsView } from './TeamInsightsView';
 import type { ActivitySeries, TrendSeries } from './InsightsCharts';
 import {
   buildActivityRows,
@@ -110,17 +127,37 @@ const RANGES = [7, 30] as const;
 
 export function InsightsPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const reduceMotion = usePrefersReducedMotion();
-  const stats = useJobStats();
+  const [params, setParams] = useSearchParams();
+  const roster = useLeadRoster();
+  const view = resolveSubject(parseSubject(params.get(SUBJECT_PARAM)), roster);
+  const member = view.member;
+  const memberId = member?.member.id;
+  const teamView = view.subject.kind === 'team' ? view.space : null;
+
+  const stats = useJobStats(memberId);
   const [days, setDays] = useState<(typeof RANGES)[number]>(7);
   const progress = useQuery({
-    queryKey: ['jobs', 'weekly-progress', days],
-    queryFn: () => fetchWeeklyProgress(days),
+    queryKey: memberId ? ['jobs', 'weekly-progress', days, 'member', memberId] : ['jobs', 'weekly-progress', days],
+    queryFn: () => (memberId ? fetchWeeklyProgress(days, memberId) : fetchWeeklyProgress(days)),
     staleTime: 60_000,
-    enabled: !!stats.data && !isEmptyPool(stats.data),
+    enabled: !teamView && !!stats.data && !isEmptyPool(stats.data),
   });
-  const inbox = useMailApplications(30);
+  const inbox = useMailApplications(30, memberId);
   const inboxToday = inbox.data?.connected ? inbox.data.totals.today : null;
+
+  const setSubject = (next: InsightsSubject) => {
+    setParams(
+      (prev) => {
+        const out = new URLSearchParams(prev);
+        if (next.kind === 'me') out.delete(SUBJECT_PARAM);
+        else out.set(SUBJECT_PARAM, subjectValue(next));
+        return out;
+      },
+      { replace: false },
+    );
+  };
 
   const goJobs = (filters: BoardFilters) => {
     useScraperStore.getState().applyAgentDashboard({ reset: true, ...filters });
@@ -128,20 +165,40 @@ export function InsightsPage() {
   };
 
   const refresh = () => {
+    if (teamView) {
+      void queryClient.invalidateQueries({ queryKey: [...TEAM_KEY, 'insights', teamView.id] });
+      void queryClient.invalidateQueries({ queryKey: teamActivityKey(teamView.id) });
+      return;
+    }
     void stats.refetch();
     void progress.refetch();
     void inbox.refetch();
   };
 
-  const updatedAt = stats.dataUpdatedAt
-    ? new Date(stats.dataUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-    : null;
+  const updatedAt =
+    !teamView && stats.dataUpdatedAt
+      ? new Date(stats.dataUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : null;
+  const refreshing = teamView
+    ? queryClient.isFetching({ queryKey: [...TEAM_KEY, 'insights', teamView.id] }) > 0
+    : stats.isFetching;
 
   let body;
-  if (stats.isPending) body = <InsightsSkeleton />;
+  if (view.pending) body = <InsightsSkeleton />;
+  else if (teamView)
+    body = (
+      <TeamInsightsView
+        key={teamView.id}
+        spaceId={teamView.id}
+        onOpenMember={(id) => setSubject({ kind: 'member', memberId: id })}
+      />
+    );
+  else if (stats.isPending) body = <InsightsSkeleton />;
   else if (stats.isError && !stats.data) body = <InsightsError onRetry={() => void stats.refetch()} />;
   else if (stats.data && isEmptyPool(stats.data))
-    body = (
+    body = member ? (
+      <MemberEmpty name={member.member.name} />
+    ) : (
       <InsightsEmpty
         onAddJobs={() => navigate('/app/jobs')}
         onAsk={() => useShellStore.getState().setAssistantDocked(true)}
@@ -152,7 +209,9 @@ export function InsightsPage() {
       <InsightsBody
         stats={stats.data}
         inboxToday={inboxToday}
-        onSelect={goJobs}
+        onSelect={member ? undefined : goJobs}
+        whose={member ? 'their' : 'your'}
+        inboxCard={<InboxApplicationsCard member={member ? { id: member.member.id, name: member.member.name } : undefined} />}
         activity={
           <ActivityCard
             days={days}
@@ -161,10 +220,17 @@ export function InsightsPage() {
             failed={progress.isError}
             rows={buildActivityRows(progress.data)}
             minScore={progress.data?.min_match_score}
+            whose={member ? 'their' : 'your'}
           />
         }
       />
     );
+
+  const description = teamView
+    ? `How everyone in ${teamView.name} is progressing. Pick a member to see their numbers in full.`
+    : member
+      ? `${member.member.name}'s pipeline, match quality and momentum, read only.`
+      : 'Your pipeline, match quality and momentum. Select any number to open those jobs.';
 
   return (
     <div className="relative isolate flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -176,7 +242,7 @@ export function InsightsPage() {
       </div>
       <div className="scrollbar-thin min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
         <PageTitle title="Insights" />
-        <div className="mx-auto w-full max-w-6xl space-y-6 px-4 pt-6 pb-24 sm:px-6">
+        <div className={cn(PAGE_BODY, 'space-y-6')}>
           <header
             className={cn(
               'jobs-hero relative isolate overflow-hidden rounded-2xl border border-border/70 bg-card shadow-xs',
@@ -194,11 +260,12 @@ export function InsightsPage() {
             <div className="relative flex flex-wrap items-center justify-between gap-4 px-5 py-5 sm:px-6">
               <div className="min-w-0">
                 <h1 className="text-2xl font-semibold tracking-tight">Insights</h1>
-                <p className="mt-1 max-w-xl text-sm text-muted-foreground">
-                  Your pipeline, match quality and momentum. Select any number to open those jobs.
-                </p>
+                <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {roster.isLead ? (
+                  <SubjectPicker value={view.subject} spaces={roster.spaces} member={member} onChange={setSubject} />
+                ) : null}
                 {updatedAt ? (
                   <span className="hidden rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground backdrop-blur sm:inline">
                     Updated {updatedAt}
@@ -209,13 +276,14 @@ export function InsightsPage() {
                   size="sm"
                   className="rounded-full bg-background/70 backdrop-blur"
                   onClick={refresh}
-                  disabled={stats.isFetching}
+                  disabled={refreshing}
                 >
-                  <RefreshCw className={cn(stats.isFetching && 'animate-spin')} />
+                  <RefreshCw className={cn(refreshing && 'animate-spin')} />
                   Refresh
                 </Button>
               </div>
             </div>
+            {member ? <MemberStrip entry={member} onBack={() => setSubject(ME)} /> : null}
           </header>
           {body}
         </div>
@@ -260,11 +328,16 @@ function InsightsBody({
   stats,
   inboxToday,
   onSelect,
+  whose,
+  inboxCard,
   activity,
 }: {
   stats: ScraperStats;
   inboxToday: number | null;
-  onSelect: (f: BoardFilters) => void;
+  /** Absent for a read-only view of someone else's numbers. */
+  onSelect?: (f: BoardFilters) => void;
+  whose: 'your' | 'their';
+  inboxCard: ReactNode;
   activity: ReactNode;
 }) {
   const today = buildTodayTiles(stats, inboxToday);
@@ -289,12 +362,12 @@ function InsightsBody({
         <TileGrid tiles={today} onSelect={onSelect} />
       </section>
 
-      <InboxApplicationsCard />
+      {inboxCard}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="min-w-0 lg:col-span-2">{activity}</div>
 
-        <Card title="Match quality" description={`How your ${fmt(scored)} scored jobs rate against your profile.`}>
+        <Card title="Match quality" description={`How ${whose} ${fmt(scored)} scored jobs rate against ${whose} profile.`}>
           <div className="flex flex-col items-center gap-4">
             <Suspense fallback={<Skeleton className="size-[168px] rounded-full" />}>
               <MatchDonut slices={quality} avg={Math.round(stats.avg_match_score ?? 0)} />
@@ -322,7 +395,7 @@ function InsightsBody({
                 );
                 return (
                   <li key={q.key}>
-                    {q.filters ? (
+                    {q.filters && onSelect ? (
                       <button
                         type="button"
                         onClick={() => onSelect(q.filters as BoardFilters)}
@@ -343,7 +416,7 @@ function InsightsBody({
 
       <Card
         title="Apply pipeline"
-        description={`Where the ${fmt(stats.total_jobs)} jobs in your visible pool stand right now.`}
+        description={`Where the ${fmt(stats.total_jobs)} jobs in ${whose} visible pool stand right now.`}
       >
         <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted" aria-hidden>
           {pipeline.map((s) =>
@@ -374,7 +447,7 @@ function InsightsBody({
             );
             return (
               <li key={s.key}>
-                {s.filters ? (
+                {s.filters && onSelect ? (
                   <button
                     type="button"
                     onClick={() => onSelect(s.filters as BoardFilters)}
@@ -384,7 +457,14 @@ function InsightsBody({
                     <ChevronRight className="absolute top-3 right-3 size-4 text-muted-foreground/50 transition group-hover:translate-x-0.5 group-hover:text-brand" />
                   </button>
                 ) : (
-                  <div className="rounded-xl border border-dashed bg-background/30 px-3.5 py-3">{inner}</div>
+                  <div
+                    className={cn(
+                      'rounded-xl border bg-background/30 px-3.5 py-3',
+                      !s.filters && 'border-dashed',
+                    )}
+                  >
+                    {inner}
+                  </div>
                 )}
               </li>
             );
@@ -416,7 +496,7 @@ function InsightsBody({
         </Card>
       </div>
 
-      <Card title="Sources" description="Where the jobs in your pool come from.">
+        <Card title="Sources" description={`Where the jobs in ${whose} pool come from.`}>
         {sources.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Sources appear after jobs sync into your pool.</p>
         ) : (
@@ -460,6 +540,7 @@ function ActivityCard({
   failed,
   rows,
   minScore,
+  whose,
 }: {
   days: number;
   onDays: (d: (typeof RANGES)[number]) => void;
@@ -467,6 +548,7 @@ function ActivityCard({
   failed: boolean;
   rows: ReturnType<typeof buildActivityRows>;
   minScore: number | undefined;
+  whose: 'your' | 'their';
 }) {
   const applied = sumBy(rows, 'applied');
   return (
@@ -476,8 +558,8 @@ function ActivityCard({
       className="h-full"
       description={
         minScore != null
-          ? `New jobs, jobs scoring ${minScore}+ (your minimum) and applications per day.`
-          : 'New jobs, jobs above your minimum score and applications per day.'
+          ? `New jobs, jobs scoring ${minScore}+ (${whose} minimum) and applications per day.`
+          : `New jobs, jobs above ${whose} minimum score and applications per day.`
       }
       actions={
         <div role="tablist" aria-label="Activity range" className="inline-flex rounded-lg bg-muted p-0.5">
@@ -546,19 +628,13 @@ function Totals({ rows, series }: { rows: ReturnType<typeof buildTrendRows>; ser
   );
 }
 
-function TileGrid({ tiles, onSelect }: { tiles: InsightTile[]; onSelect: (f: BoardFilters) => void }) {
+function TileGrid({ tiles, onSelect }: { tiles: InsightTile[]; onSelect?: (f: BoardFilters) => void }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {tiles.map((t, i) => {
         const Icon = TILE_ICONS[t.key];
-        return (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => onSelect(t.filters)}
-            style={{ animationDelay: `${60 + i * 40}ms` }}
-            className="jobs-summary-card group min-w-0 rounded-2xl border bg-card/85 p-4 text-left shadow-xs backdrop-blur-sm transition-all outline-none hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50"
-          >
+        const content = (
+          <>
             <div className="flex items-center justify-between gap-2">
               <p className="truncate text-xs font-medium text-muted-foreground">{t.label}</p>
               <span
@@ -573,7 +649,26 @@ function TileGrid({ tiles, onSelect }: { tiles: InsightTile[]; onSelect: (f: Boa
             </div>
             <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{t.display}</p>
             {t.hint ? <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.hint}</p> : null}
+          </>
+        );
+        const base = 'jobs-summary-card group min-w-0 rounded-2xl border bg-card/85 p-4 text-left shadow-xs backdrop-blur-sm';
+        return onSelect ? (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => onSelect(t.filters)}
+            style={{ animationDelay: `${60 + i * 40}ms` }}
+            className={cn(
+              base,
+              'transition-all outline-none hover:-translate-y-0.5 hover:border-brand/30 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring/50',
+            )}
+          >
+            {content}
           </button>
+        ) : (
+          <div key={t.key} style={{ animationDelay: `${60 + i * 40}ms` }} className={base}>
+            {content}
+          </div>
         );
       })}
     </div>
@@ -640,6 +735,68 @@ function InsightsError({ onRetry }: { onRetry: () => void }) {
         Retry
       </Button>
     </div>
+  );
+}
+
+function MemberStrip({ entry, onBack }: { entry: RosterMember; onBack: () => void }) {
+  const { member, space } = entry;
+  const { stats } = member;
+  const chips = [
+    { label: 'Applied', value: stats.applied },
+    { label: 'Jobs added', value: stats.jobs_added },
+    { label: 'Active interviews', value: stats.active_interviews },
+    { label: 'Upcoming', value: stats.upcoming_interviews },
+  ];
+  return (
+    <div
+      aria-label={`Viewing ${member.name}`}
+      role="group"
+      className="relative flex flex-wrap items-center justify-between gap-3 border-t border-border/50 px-5 py-3 sm:px-6"
+    >
+      <div className="flex min-w-0 items-center gap-3">
+        <MemberAvatar id={member.id} name={member.name} className="size-10 text-sm" />
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold">{member.name}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {member.headline ? `${member.headline} · ` : ''}
+            {space.name} · {relativeAgo(stats.last_active_at) ? `active ${relativeAgo(stats.last_active_at)}` : 'no activity yet'}
+          </p>
+        </div>
+      </div>
+      <dl className="flex flex-wrap gap-2" aria-label="Last 30 days">
+        {chips.map((c) => (
+          <div key={c.label} className="rounded-lg border border-border/60 bg-background/60 px-2.5 py-1 backdrop-blur">
+            <dt className="text-[10px] font-medium text-muted-foreground">{c.label}</dt>
+            <dd className="text-sm leading-tight font-semibold tabular-nums">{fmt(c.value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="flex items-center gap-2">
+        <Link
+          to={`/app/team/${encodeURIComponent(space.id)}/members/${encodeURIComponent(member.id)}`}
+          className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'rounded-full bg-background/70')}
+        >
+          <FileBarChart /> Full report
+        </Link>
+        <Button variant="ghost" size="sm" className="rounded-full" onClick={onBack}>
+          <ArrowLeft /> Back to you
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function MemberEmpty({ name }: { name: string }) {
+  return (
+    <Empty className="rounded-2xl border border-dashed bg-card/60 py-16 backdrop-blur-sm">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <BarChart3 />
+        </EmptyMedia>
+        <EmptyTitle>No jobs in {name}&apos;s pool yet</EmptyTitle>
+        <EmptyDescription>Their pipeline, matches and trends appear here once they add or sync jobs.</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 

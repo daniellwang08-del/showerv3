@@ -128,7 +128,6 @@ export function AdminUsersPage() {
 
   return (
     <PageLayout
-      width="wide"
       title="Users"
       description="Approve signups and manage roles, account status, and passwords. Select rows for bulk actions; click a row for details."
       actions={

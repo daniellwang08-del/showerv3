@@ -19,7 +19,6 @@ export function SharedWithMePage() {
     <PageLayout
       title="Shared with me"
       description="Job search reports other people shared with your account. Each one is live and read only."
-      width="wide"
     >
       {query.isPending ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading shared reports">

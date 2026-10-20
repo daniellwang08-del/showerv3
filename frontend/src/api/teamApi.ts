@@ -3,6 +3,7 @@ import type { JobShareDefault } from '../types/settings';
 import type {
   InviteResult,
   TeamActivity,
+  TeamInsights,
   TeamMemberReport,
   TeamOverview,
   TeamSpaceDetail,
@@ -41,6 +42,13 @@ export async function deleteTeamSpace(id: string): Promise<void> {
 
 export async function fetchTeamActivity(id: string): Promise<TeamActivity> {
   const { data } = await apiClient.get<TeamActivity>(`${space(id)}/activity`);
+  return data;
+}
+
+export async function fetchTeamInsights(id: string, days: number): Promise<TeamInsights> {
+  const { data } = await apiClient.get<TeamInsights>(`${space(id)}/insights`, {
+    params: { days, timezone: timezone() },
+  });
   return data;
 }
 

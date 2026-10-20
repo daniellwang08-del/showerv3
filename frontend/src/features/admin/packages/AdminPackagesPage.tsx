@@ -88,7 +88,6 @@ export function AdminPackagesPage() {
 
   return (
     <PageLayout
-      width="wide"
       title="Packages"
       description="Grant credit and TEAM packages to anyone, follow what they hold and use, and take back mistakes."
       actions={

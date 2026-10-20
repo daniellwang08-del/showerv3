@@ -83,6 +83,31 @@ export interface TeamActivity {
   days: number;
 }
 
+export interface TeamInsightsMember extends TeamPerson {
+  headline: string | null;
+  joined_at: string | null;
+  stats: MemberStats & { interview_updates: number };
+  /** One value per entry in `TeamInsights.dates`. */
+  series: { added: number[]; applied: number[]; interviews: number[] };
+}
+
+export interface TeamInsights {
+  space: { id: string; public_id: string; name: string };
+  days: number;
+  /** Local calendar days, oldest first (YYYY-MM-DD). */
+  dates: string[];
+  members: TeamInsightsMember[];
+  totals: {
+    members: number;
+    active_members: number;
+    jobs_added: number;
+    applied: number;
+    interview_updates: number;
+    active_interviews: number;
+    upcoming_interviews: number;
+  };
+}
+
 export interface InviteResult {
   invites: TeamInvite[];
   skipped: { email: string; reason: string }[];

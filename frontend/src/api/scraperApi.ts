@@ -118,9 +118,12 @@ export async function fetchScrapedJob(id: string) {
   return data;
 }
 
-export async function fetchScraperStats(): Promise<ScraperStats> {
+/** `memberId` reads a member of a team space the caller leads. */
+export async function fetchScraperStats(memberId?: string): Promise<ScraperStats> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const { data } = await apiClient.get('/scraper/stats', { params: { timezone } });
+  const { data } = await apiClient.get('/scraper/stats', {
+    params: memberId ? { timezone, member_id: memberId } : { timezone },
+  });
   return data;
 }
 
@@ -133,9 +136,11 @@ export interface WeeklyProgress {
 }
 
 /** Daily new / above-minimum / applied counts for the last ``days`` local days. */
-export async function fetchWeeklyProgress(days: number): Promise<WeeklyProgress> {
+export async function fetchWeeklyProgress(days: number, memberId?: string): Promise<WeeklyProgress> {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const { data } = await apiClient.get('/jobs/dashboard/weekly-progress', { params: { timezone, days } });
+  const { data } = await apiClient.get('/jobs/dashboard/weekly-progress', {
+    params: memberId ? { timezone, days, member_id: memberId } : { timezone, days },
+  });
   return data;
 }
 

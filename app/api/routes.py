@@ -3873,17 +3873,22 @@ class WeeklyProgressResponse(BaseModel):
 async def get_weekly_progress(
     timezone: str | None = Query(None),
     days: int = Query(7, ge=1, le=31),
+    member_id: str | None = Query(None, max_length=64),
     current_user: dict = Depends(get_current_user),
 ) -> WeeklyProgressResponse:
     """Last-N-days chart: posted / recommended (Preferences min score) / applied.
 
     Supports day (1), week (7), and month (~30) windows for the extension stats page.
+    A team lead may pass ``member_id`` to read one of their members.
     """
     user_id = current_user.get("user_id")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
 
+    from app.api.team_access import insights_subject
     from app.services.weekly_progress import fetch_weekly_progress_series
+
+    user_id = await insights_subject(user_id, member_id)
 
     try:
         async with get_session() as session:
