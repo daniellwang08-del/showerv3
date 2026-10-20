@@ -115,7 +115,7 @@ class JobSitePlugin:
     fetch: FetchFn | None = None
     # Minimum hours between syncs; set from the board's published polling rules.
     min_sync_hours: float = 6.0
-    # Requests a key may ever make (Jooble free keys: 500). 0 means no cap.
+    # Requests a key may ever make (trial keys with a lifetime quota). 0 means no cap.
     lifetime_request_cap: int = 0
 
     @property

@@ -1,15 +1,16 @@
-"""Adzuna, Welcome to the Jungle, and the browser-synced boards (Glassdoor, Remote.co)."""
+"""Adzuna, JSearch, Welcome to the Jungle, and the browser-sync plumbing."""
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 
-from app.job_sites.base import AuthType, FetchContext
+from app.job_sites import registry
+from app.job_sites.base import AuthType, BrowserSync, FetchContext, JobSitePlugin
 from app.job_sites import html_fetch
 from app.job_sites.errors import RateLimited
-from app.job_sites.plugins import adzuna, browser_boards, jsearch, welcometothejungle
-from app.job_sites.registry import get_plugin
+from app.job_sites.plugins import adzuna, jsearch, welcometothejungle
+from app.job_sites.registry import get_plugin, list_plugins
 from app.services import job_site_connection_sync as sync
 from app.services.extraction_service import _is_aggregator_domain
 
@@ -190,7 +191,7 @@ async def test_jsearch_searches_the_users_keywords(monkeypatch):
 
 
 def test_keyword_boards_prefill_the_default_search():
-    for slug in ("jsearch", "adzuna", "welcometothejungle", "glassdoor"):
+    for slug in ("jsearch", "adzuna", "welcometothejungle"):
         fields = {f["key"]: f for f in get_plugin(slug).catalog_dict()["credential_fields"]}
         assert fields["keywords"]["default"] == "remote senior software engineer", slug
     assert get_plugin("jsearch").catalog_dict()["credential_fields"][0]["default"] is None
@@ -246,39 +247,36 @@ def test_wttj_country_facet():
     assert "facetFilters" not in welcometothejungle.search_body("go", "", hits=5)
 
 
-def test_browser_plugins_in_catalog():
-    for slug, collector in (("glassdoor", "glassdoor"), ("remoteco", "remoteco")):
-        plugin = get_plugin(slug)
-        assert plugin.auth_type == AuthType.BROWSER
-        assert plugin.connectable
-        assert plugin.catalog_dict()["browser_sync"]["collector"] == collector
-        assert slug in sync.browser_plugin_slugs()
+def test_board_lists_only_working_sites():
+    assert {p.slug for p in list_plugins()} == {
+        "adzuna", "jobicy", "jobright", "jsearch", "remoterocketship", "welcometothejungle",
+    }
+    assert all(p.connectable for p in list_plugins())
+    for slug in ("glassdoor", "remoteco", "remotive", "linkedin", "indeed"):
+        assert get_plugin(slug) is None
 
 
-def test_glassdoor_start_urls():
-    ctx = FetchContext()
-    assert browser_boards.glassdoor_start_urls({}, ctx) == [
-        "https://www.glassdoor.com/Job/jobs.htm?sc.keyword=remote+senior+software+engineer&fromAge=3"
-    ]
-    assert browser_boards.glassdoor_start_urls({"keywords": "data & ml"}, ctx) == [
-        "https://www.glassdoor.com/Job/jobs.htm?sc.keyword=data+%26+ml&fromAge=3"
-    ]
-    custom = "https://www.glassdoor.com/Job/remote-python-jobs-SRCH_IL.0,6_IS11047_KO7,13.htm?fromAge=1"
-    assert browser_boards.glassdoor_start_urls({"search_url": custom, "keywords": "x"}, ctx) == [custom]
-    assert browser_boards.glassdoor_start_urls({"search_url": "https://evil.example/glassdoor.com"}, ctx)[0].startswith(
-        "https://www.glassdoor.com/Job/jobs.htm"
+@pytest.fixture
+def browser_board():
+    plugin = registry.register(
+        JobSitePlugin(
+            slug="testboard",
+            name="Test Board",
+            blurb="",
+            homepage="https://board.test/",
+            auth_type=AuthType.BROWSER,
+            logo_file="",
+            browser_sync=BrowserSync(collector="testboard", start_urls=lambda _c, _ctx: ["https://board.test/jobs"]),
+        )
     )
+    yield plugin
+    registry._PLUGINS.pop(plugin.slug, None)
 
 
-def test_remoteco_start_urls():
-    ctx = FetchContext()
-    assert browser_boards.remoteco_start_urls({}, ctx) == [
-        "https://remote.co/remote-jobs/developer",
-        "https://remote.co/remote-jobs/software-engineer",
-        "https://remote.co/remote-jobs/it",
-    ]
-    raw = "https://remote.co/remote-jobs/qa, https://remote.co/about https://other.com/remote-jobs/x http://remote.co/remote-jobs/qa"
-    assert browser_boards.remoteco_start_urls({"search_url": raw}, ctx) == ["https://remote.co/remote-jobs/qa"]
+def test_browser_plugins_in_catalog(browser_board):
+    assert browser_board.connectable
+    assert browser_board.catalog_dict()["browser_sync"]["collector"] == "testboard"
+    assert sync.browser_plugin_slugs() == ["testboard"]
 
 
 def _conn(**over):
@@ -320,7 +318,7 @@ class _Result:
 
 
 @pytest.fixture
-def browser_env(monkeypatch):
+def browser_env(monkeypatch, browser_board):
     row = SimpleNamespace(id="conn-1")
     user = SimpleNamespace(manual_submit_pipeline="full")
     calls = SimpleNamespace(failures=[], ingests=[])
@@ -353,26 +351,26 @@ def browser_env(monkeypatch):
 @pytest.mark.asyncio
 async def test_browser_results_ingest_jobs(browser_env):
     jobs = [SimpleNamespace(url="https://jobs.example/1")]
-    out = await sync.ingest_browser_results("u1", "remoteco", jobs)
+    out = await sync.ingest_browser_results("u1", "testboard", jobs)
     assert out["status"] == "synced"
     (connection_id, slug, user_id, listing, kw) = browser_env.ingests[0]
-    assert (connection_id, slug, user_id, listing) == ("conn-1", "remoteco", "u1", jobs)
+    assert (connection_id, slug, user_id, listing) == ("conn-1", "testboard", "u1", jobs)
     assert set(kw) == {"chain_analysis", "skip_phase_b"}
     assert browser_env.failures == []
 
 
 @pytest.mark.asyncio
 async def test_browser_results_blocked_is_rate_limited(browser_env):
-    await sync.ingest_browser_results("u1", "glassdoor", [], blocked=True)
+    await sync.ingest_browser_results("u1", "testboard", [], blocked=True)
     (_cid, slug, exc, counted) = browser_env.failures[0]
-    assert slug == "glassdoor" and counted is False
+    assert slug == "testboard" and counted is False
     assert isinstance(exc, sync.BrowserBlocked)
     assert sync.classify_failure(exc) == sync.FAILURE_RATE_LIMITED
 
 
 @pytest.mark.asyncio
 async def test_browser_results_error_is_transient(browser_env):
-    await sync.ingest_browser_results("u1", "glassdoor", [], error="The sync tab was closed.")
+    await sync.ingest_browser_results("u1", "testboard", [], error="The sync tab was closed.")
     exc = browser_env.failures[0][2]
     assert sync.classify_failure(exc) == sync.FAILURE_TRANSIENT
     assert str(exc) == "The sync tab was closed."

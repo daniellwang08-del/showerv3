@@ -48,7 +48,7 @@ export interface JobSitePlugin {
   session_capture: JobSiteSessionCapture | null;
   browser_sync?: JobSiteBrowserSync | null;
   min_sync_hours?: number;
-  /** Requests a key may ever make (Jooble free keys); null when uncapped. */
+  /** Requests a key may ever make (trial keys with a lifetime quota); null when uncapped. */
   lifetime_request_cap?: number | null;
 }
 

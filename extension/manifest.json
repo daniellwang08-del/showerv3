@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "NAO",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Apply faster with NAO: tailored resumes, application autofill, and an assistant that knows each job.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt0ON3WuqLhSQrnqtIytemjIu2bpyd5cCONAeyizYe0nFhKCfRySwXlwLWOsyMo8btFyHEloymbInWDlJ3csRoWEPC6OYQefKjreB3QNCMPjjIGjiwbv8EmM1qZ4F03VD9EzGIYghr9E35oOY7NkFvb4oj6fb8Gde9J4cVZSwbVofHe0UoSARHxUVEMTaoIDabTAVW5oD/sCBfQZZaUtXvDyZZgPF2eqI4H0ZBuSgEVknAKftdECG69eC0zGZl3SVMYn6t7+frwXuFgoRWc90OEdz09dvRxXCNWmcKEdeksnJRpfUMCH0cvRmw4i3QjVRyJjqGWMncGGY1oVBny9CewIDAQAB",
   "permissions": [
@@ -22,9 +22,7 @@
     "http://127.0.0.1/*",
     "https://localhost/*",
     "https://*.jobright.ai/*",
-    "https://jobright.ai/*",
-    "https://*.glassdoor.com/*",
-    "https://remote.co/*"
+    "https://jobright.ai/*"
   ],
   "background": {
     "service_worker": "background.js",
