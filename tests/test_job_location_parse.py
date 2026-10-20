@@ -91,6 +91,7 @@ def test_named_places_are_never_inferred():
     assert display_location_countries("Berlin, Germany") == (["DE"], False)
     assert display_location_countries("Remote, United States") == (["US"], False)
     assert display_location_countries("Springfield") == ([], False)
+    assert display_location_countries("Multiple Locations") == ([], False)
 
 
 @pytest.mark.parametrize("location", ["Worldwide", "Remote Anywhere", "Global"])

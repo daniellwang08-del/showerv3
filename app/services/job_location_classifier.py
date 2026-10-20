@@ -405,7 +405,7 @@ def detect_countries_in_text(text: str | None) -> list[str]:
 
 _NO_PLACE_WORDS_RE = re.compile(
     r"\b(?:remote|hybrid|on-?site|in[- ]office|office|work from home|wfh|fully|"
-    r"100%|unknown|n/a|not specified|tbd|flexible|various|multiple locations)(?!\w)"
+    r"100%|unknown|n/a|not specified|tbd|flexible)(?!\w)"
 )
 
 
