@@ -62,9 +62,9 @@ export function PrivacyPolicyPage() {
               error logs, and security events needed to operate and improve the Service.
             </>,
             <>
-              <strong className="text-white">Billing data:</strong> if subscriptions are enabled, payment
-              processor identifiers and subscription status. Card details are handled by our payment
-              provider, not stored as full card numbers on NAO servers.
+              <strong className="text-white">Billing data:</strong> your credit balance, credit usage, and
+              purchase records. Payment details are handled by our payment provider and are not stored on NAO
+              servers.
             </>,
           ]}
         />

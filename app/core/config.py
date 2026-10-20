@@ -329,30 +329,6 @@ class Settings(BaseSettings):
     # (e.g. ".nao.it.com"). Empty = host-only (local/dev default).
     auth_cookie_domain: str = Field(default="")
 
-    # ── Stripe billing / subscriptions ───────────────────────────────────
-    # Master switch for the whole subscription feature. Set BILLING_ENABLED=false
-    # to disable payments (checkout/portal return 503, the pricing page reports
-    # "not available") WITHOUT discarding the Stripe keys below, so it can be
-    # flipped back on later with a single env change + restart.
-    billing_enabled: bool = Field(default=True)
-    # Server-side secret key (sk_live_… / sk_test_…). Empty = billing disabled;
-    # the /billing endpoints report "not configured" instead of erroring.
-    stripe_secret_key: str = Field(default="")
-    # Publishable key (pk_…). Not required for hosted Checkout (we redirect to the
-    # session URL) but exposed to the SPA for completeness / future Elements use.
-    stripe_publishable_key: str = Field(default="")
-    # Webhook signing secret (whsec_…) for POST /billing/webhook. Without it the
-    # webhook refuses every event so forged subscription updates are impossible.
-    stripe_webhook_secret: str = Field(default="")
-    # Recurring Price IDs (price_…) created in the Stripe dashboard, one per plan.
-    stripe_price_trial: str = Field(default="")
-    stripe_price_monthly: str = Field(default="")
-    stripe_price_quarterly: str = Field(default="")
-    stripe_price_yearly: str = Field(default="")
-    # Where Stripe Checkout / Customer Portal returns the user. Empty = derive
-    # from frontend_url (…/billing), falling back to the local dev SPA origin.
-    stripe_billing_return_url: str = Field(default="")
-
     google_sheets_credentials_path: str = Field(default="google_credentials.json")
 
     # Gmail read-only OAuth (per-user inbox search). Empty client id/secret

@@ -47,7 +47,7 @@ export function CheckoutPreviewDialog({ pkg, onClose }: { pkg: CreditPackage | n
               <Lock />
               <AlertTitle>Checkout opens soon</AlertTitle>
               <AlertDescription>
-                Card payments through Stripe are being set up. Nothing has been charged.
+                Payments are being set up. Nothing has been charged.
               </AlertDescription>
             </Alert>
 

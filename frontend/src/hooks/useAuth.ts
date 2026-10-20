@@ -29,12 +29,6 @@ export type AuthUser = {
   created_at?: string;
   approval_status?: ApprovalStatus;
   approved_at?: string | null;
-  // Subscription snapshot mirrored from Stripe (see /auth/me).
-  is_subscribed?: boolean;
-  subscription_plan?: string | null;
-  subscription_status?: string | null;
-  subscription_current_period_end?: string | null;
-  subscription_cancel_at_period_end?: boolean;
 };
 
 export function useAuth() {

@@ -161,7 +161,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           // Only vendors every route needs get named chunks; route-only libraries
-          // (recharts, markdown, stripe) must stay unassigned so Rollup keeps them
+          // (recharts, markdown) must stay unassigned so Rollup keeps them
           // behind their lazy pages instead of hoisting them into the entry.
           manualChunks(id) {
             const m = /node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/.exec(id)

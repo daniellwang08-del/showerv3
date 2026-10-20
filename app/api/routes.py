@@ -564,9 +564,6 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
                 detail="User not found"
             )
         
-        from app.services.billing.subscription_service import public_state
-
-        sub_state = await public_state(session, user.id)
         logger.debug("auth_me_success", user_id=user_id)
         return UserResponse(
             id=user.id,
@@ -578,7 +575,6 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             created_at=user.created_at,
             approval_status=user.approval_status,
             approved_at=user.approved_at,
-            **sub_state,
         )
 
 
@@ -663,9 +659,6 @@ async def update_profile(
         await session.commit()
 
         user = await user_repo.get_by_id(user_id)
-        from app.services.billing.subscription_service import public_state
-
-        sub_state = await public_state(session, user.id)
         return UserResponse(
             id=user.id,
             email=user.email,
@@ -674,7 +667,6 @@ async def update_profile(
             is_active=user.is_active,
             is_admin=bool(getattr(user, "is_admin", False)),
             created_at=user.created_at,
-            **sub_state,
         )
 
 

@@ -93,11 +93,11 @@ export function TermsOfServicePage() {
         </p>
       </LegalSection>
 
-      <LegalSection title="8. Subscriptions and fees">
+      <LegalSection title="8. Credits and fees">
         <p>
-          Some features may require a paid plan. Fees, billing intervals, and renewal terms are presented at
-          checkout. Unless required by law, fees are non-refundable once a billing period begins. Failure to
-          pay may result in suspension of paid features.
+          Some features use prepaid credits. Credit prices and package sizes are presented before purchase.
+          Purchases are one-time, there is no recurring charge. Unless required by law, purchased credits are
+          non-refundable once used. Features that need credits are unavailable while your balance is empty.
         </p>
       </LegalSection>
 

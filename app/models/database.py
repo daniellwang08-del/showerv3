@@ -34,10 +34,6 @@ class User(Base):
     approved_by = Column(String(36), nullable=True)
     # Tokens issued before this instant are rejected (password reset, rejection).
     sessions_valid_after = Column(DateTime, nullable=True)
-    # Stripe customer id (cus_…). Created lazily the first time a user opens
-    # Checkout, then reused so a user never spawns duplicate Stripe customers.
-    # Nullable + unique: Postgres allows many NULLs under a unique constraint.
-    stripe_customer_id = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -185,42 +181,6 @@ class User(Base):
     cover_letter_template_status = Column(String(30), default="missing", nullable=False, server_default="missing")
     cover_letter_template_working_path = deferred(Column(Text, nullable=True))
     cover_letter_template_error = Column(Text, nullable=True)
-
-
-class UserSubscription(Base):
-    """One Stripe subscription per user (source of truth: Stripe webhooks).
-
-    A single row per ``user_id`` mirrors the current subscription so the app can
-    answer "is this user entitled?" without a Stripe round-trip. Stripe remains
-    authoritative, every field here is (re)written from webhook events and from
-    the subscription object returned at checkout, never guessed locally.
-    """
-
-    __tablename__ = "user_subscriptions"
-
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = Column(
-        String(36),
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-        index=True,
-    )
-    stripe_customer_id = Column(String(64), nullable=True, index=True)
-    stripe_subscription_id = Column(String(64), nullable=True, unique=True, index=True)
-    # Plan slug: "monthly" | "quarterly" | "yearly" (see app.services.billing.plans).
-    plan = Column(String(20), nullable=True)
-    # Stripe Price id backing the subscription (price_…).
-    price_id = Column(String(64), nullable=True)
-    # Raw Stripe subscription status: active | trialing | past_due | canceled |
-    # incomplete | incomplete_expired | unpaid | paused.
-    status = Column(String(30), nullable=False, server_default="incomplete")
-    # End of the current paid period (entitlement horizon). UTC.
-    current_period_end = Column(DateTime, nullable=True)
-    # True once the user cancels: access stays until current_period_end.
-    cancel_at_period_end = Column(Boolean, nullable=False, server_default="false")
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class ResumeCustomTheme(Base):
