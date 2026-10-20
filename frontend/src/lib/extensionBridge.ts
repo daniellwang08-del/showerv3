@@ -196,6 +196,32 @@ export function connectExtensionSession(timeoutMs = 10_000): Promise<{ ok: boole
   });
 }
 
+/** Open (or focus) the extension's auto-apply console in a new tab. */
+export function openAutoApply(timeoutMs = 4000): Promise<{ ok: boolean; error?: string }> {
+  if (typeof window === 'undefined') return Promise.resolve({ ok: false, error: 'No browser window.' });
+  const requestId = randomId();
+  return new Promise((resolve) => {
+    const finish = (res: { ok: boolean; error?: string }) => {
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(timer);
+      resolve(res);
+    };
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== window) return;
+      const data = event.data as (ExtMessage & { ok?: boolean; error?: string }) | undefined;
+      if (!data || data.source !== EXT_SOURCE || data.type !== 'OPEN_AUTO_APPLY_ACK') return;
+      if (data.requestId !== requestId) return;
+      finish({ ok: data.ok === true, error: data.error });
+    };
+    const timer = window.setTimeout(
+      () => finish({ ok: false, error: 'The extension did not answer. Update and reload the NAO extension, then refresh this page.' }),
+      timeoutMs,
+    );
+    window.addEventListener('message', onMessage);
+    window.postMessage({ source: WEBAPP_SOURCE, type: 'OPEN_AUTO_APPLY', requestId }, window.location.origin);
+  });
+}
+
 export interface JobSiteConnectSessionSpec {
   slug: string;
   startUrl: string;

@@ -39,8 +39,17 @@ function ReadyCard({ count, loading }) {
       <span class="ready-count"><${Count} value=${count} loading=${loading} /></span>
       <span class="ready-hint">${LISTS.ready.hint}</span>
     </button>
-    <${Button} variant="primary" icon="bolt" disabled=${!count} onClick=${() => startApplying("ready")}>Start</${Button}>
+    <div class="ready-actions">
+      <${Button} variant="primary" icon="bolt" disabled=${!count} onClick=${() => startApplying("ready")}>Start</${Button}>
+      <${Button} variant="secondary" icon="wand" disabled=${!count} title="Fill and submit ready jobs on their own" onClick=${openAutoApply}>Auto-apply</${Button}>
+    </div>
   </div>`;
+}
+
+function openAutoApply() {
+  chrome.runtime.sendMessage({ type: "OPEN_AUTO_APPLY" }).catch(() => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("autoapply.html") });
+  });
 }
 
 function InProgress({ data }) {

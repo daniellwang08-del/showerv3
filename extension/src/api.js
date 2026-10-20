@@ -255,6 +255,13 @@ export const updateSession = (jobId, status) =>
 export const nextJob = (after, { view, remote_only, min_match_score, timezone } = {}) =>
   apiFetch(`/assistant/next-job${qs({ after, view, remote_only, min_match_score: min_match_score || undefined, timezone })}`);
 
+/** Latest emailed application code received after `since` (unix seconds): { connected, code, from?, subject? } */
+export const getVerificationCode = ({ since, company, exclude } = {}) =>
+  apiFetch(
+    `/mail/verification-code${qs({ since: Math.floor(since), company, exclude: exclude && exclude.length ? exclude.join(",") : undefined })}`,
+    { timeoutMs: 60_000 }
+  );
+
 export const markApplied = (jobIds) =>
   apiFetch("/jobs/valid/applied/batch", { method: "POST", body: { job_ids: jobIds } });
 

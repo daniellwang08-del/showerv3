@@ -33,6 +33,7 @@ import {
   clearProfileCache,
   debugLog,
   delay,
+  focusGate,
   tabBroadcast,
   tabSend,
 } from "./shared.js";
@@ -45,48 +46,53 @@ let writeWaiter = null;
 // Monotonic id correlating each AF_WRITE with its AF_WRITE_RESULT.
 let writePassSeq = 0;
 
-export async function startAutofill() {
+/**
+ * Start filling the application in the work tab. Auto-apply passes `tab` (a
+ * background tab it owns) and `headless`: host access was granted up front, so
+ * no permission prompt, and failures come back as `{ ok: false, error }`.
+ */
+export async function startAutofill({ tab: targetTab = null, headless = false } = {}) {
+  const fail = (message) => {
+    if (!headless) toast(message);
+    return { ok: false, error: message };
+  };
   try {
-    const tab = await getWorkTab();
+    const tab = targetTab || (await getWorkTab());
     if (!tab || tab.id == null || !/^https?:/i.test(tab.url || "")) {
-      toast("Open the job application page in the active tab first.");
-      return;
+      return fail("Open the job application page in the active tab first.");
     }
     try {
       new URL(tab.url);
     } catch {
-      toast("Cannot read the page URL.");
-      return;
+      return fail("Cannot read the page URL.");
     }
     // Route to the platform's engine using the LIVE application page URL (more
     // reliable than the snapshot URL). A platform with a reserved-but-unbuilt
     // dedicated engine (e.g. Workday) is not filled by the generic engine.
     const engine = resolveEngine({ snapshot: state.job && state.job.snapshot, pageUrl: tab.url });
     if (!engine.available) {
-      toast(`${engine.label} engine is not available yet. ${engine.note || "It will get its own dedicated engine."}`);
-      return;
+      return fail(`${engine.label} engine is not available yet. ${engine.note || "It will get its own dedicated engine."}`);
     }
     // Host permission for the page (and embedded ATS iframe when applicable).
     const permOrigins = autofillPermissionOrigins(tab.url, engine.platform);
     if (!permOrigins.length) {
-      toast("This page URL cannot be used for autofill (need an http/https application page).");
-      return;
+      return fail("This page URL cannot be used for autofill (need an http/https application page).");
     }
-    const granted = await chrome.permissions.request({ origins: permOrigins });
+    const granted = headless
+      ? await chrome.permissions.contains({ origins: permOrigins })
+      : await chrome.permissions.request({ origins: permOrigins });
     if (!granted) {
-      toast("Permission to read this page was denied.");
-      return;
+      return fail(headless ? "NAO does not have access to this site. Start auto-apply again to allow it." : "Permission to read this page was denied.");
     }
     const res = await chrome.runtime.sendMessage({ type: "AUTOFILL_INJECT", tabId: tab.id, engine: engine.scripts });
     if (!res || !res.ok) {
-      toast("Could not start autofill on this page.");
-      return;
+      return fail("Could not start autofill on this page.");
     }
     // Deterministic engines (Workday) fill straight from the canonical profile -
     // no manual region selection, no LLM.
     if (engine.mode === "workday") {
       await startWorkdayAutofill(tab, engine);
-      return;
+      return { ok: true, engine };
     }
     // Auto-discovery engines (Greenhouse): select the page's single application
     // container and fill it automatically - no manual field tagging.
@@ -103,7 +109,7 @@ export async function startAutofill() {
             runStatus: null,
             error: "Could not open JobDiva Quick Apply on this page.",
           });
-          return;
+          return { ok: false, error: "Could not open JobDiva Quick Apply on this page." };
         }
       }
       // Generic custom career pages: accept privacy/terms overlays before scan so
@@ -129,18 +135,21 @@ export async function startAutofill() {
       // Fallback in case no frame reports back (e.g. the form is missing): wait
       // past the in-page discovery retry window, then either fill what we found
       // or surface an error. JobDiva gets a longer window for the modal mount.
-      const discoverMs = engine.platform === "jobdiva" ? 16000 : 3500;
+      // Background tabs run page timers about once a second, so discovery there
+      // takes several times longer.
+      const discoverMs = (engine.platform === "jobdiva" ? 16000 : 3500) * (headless ? 4 : 1);
       setTimeout(() => {
         if (!state.autofill.active || !state.autofill.discovering) return;
         if (state.autofill.fields.length) maybeAutoRun();
         else setAutofill({ discovering: false, error: "Could not find the application form on this page." });
       }, discoverMs);
-      return;
+      return { ok: true, engine };
     }
     await tabMsg.broadcastTabMessage(tab.id, { type: "AF_START" });
     setState({ autofill: { ...emptyAutofill(), active: true, picking: true, tabId: tab.id, engine } });
+    return { ok: true, engine };
   } catch (err) {
-    toast("Autofill could not start: " + ((err && err.message) || err));
+    return fail("Autofill could not start: " + ((err && err.message) || err));
   }
 }
 
@@ -527,6 +536,8 @@ async function uploadAshbyResumeLast(tabId, pending) {
 // (Workday-proven: side panel keeps document.hasFocus() false on the page).
 async function focusApplicationTab(tabId) {
   if (tabId == null) return;
+  const gate = focusGate();
+  if (gate) return gate(tabId);
   try {
     const tab = await chrome.tabs.get(tabId);
     await chrome.windows.update(tab.windowId, { focused: true });
@@ -1133,6 +1144,14 @@ function markFileControlAttached(ctx, cid) {
 
 export async function runAutofill() {
   if (!state.job || !state.autofill.fields.length || state.autofill.running) return;
+  try {
+    await runAutofillPass();
+  } finally {
+    setAutofill({ runDone: Date.now() });
+  }
+}
+
+async function runAutofillPass() {
   const tabId = state.autofill.tabId;
   // Clicking run leaves picking mode and clears the on-page selection outlines so
   // the page is clean while filling (control attributes are kept for the writer).
@@ -1425,7 +1444,9 @@ export async function runAutofill() {
       const sub = await submitJobDiva(tabId);
       debugLog("[autofill] JobDiva submit result:", sub);
       if (sub.submitted) {
-        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: [] });
+        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: [], submitted: true });
+        // Auto-apply records the submit itself and must not move the panel on.
+        if (state.autoApply) return;
         toast("Application submitted, completing & loading next…");
         await completeJob({ next: true });
         return;

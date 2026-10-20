@@ -1,11 +1,12 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle2, Gauge, Loader2, Send, Settings2, Zap, type LucideIcon } from 'lucide-react';
+import { Bot, CheckCircle2, Gauge, Loader2, Send, Settings2, Zap, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiClient } from '@/api/client';
 import type { DashboardView } from '@/api/scraperApi';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
+import { openAutoApply } from '@/lib/extensionBridge';
 import { cn } from '@/lib/utils';
 import { useSettingsQuery } from '@/features/settings/queries';
 import { useScraperStore } from '@/stores/scraperStore';
@@ -66,6 +67,7 @@ export function JobsSummary({
           onView={onView}
           style={animate(0)}
           motion={!reduceMotion}
+          aside={<AutoApplyButton ready={ready ?? 0} />}
         >
           <ReadyBreakdown total={ready} today={todayReady} />
         </SummaryCard>
@@ -194,6 +196,36 @@ function ReadyBreakdown({ total, today }: { total: number | undefined; today: nu
         </span>
       </span>
     </span>
+  );
+}
+
+function AutoApplyButton({ ready }: { ready: number }) {
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try {
+      const res = await openAutoApply();
+      if (!res.ok) toast.error(res.error || 'Could not open auto-apply in the NAO extension.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      disabled={ready === 0 || busy}
+      onClick={() => void open()}
+      title="Fill and submit ready jobs automatically with the NAO extension"
+      className={cn(
+        'group/auto inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold outline-none transition-all',
+        'bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-sm shadow-emerald-500/30',
+        'hover:-translate-y-px hover:shadow-md hover:shadow-emerald-500/40 focus-visible:ring-2 focus-visible:ring-ring/50',
+        'disabled:pointer-events-none disabled:opacity-50',
+      )}
+    >
+      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Bot className="size-3.5 transition-transform group-hover/auto:scale-110" />}
+      Auto-apply
+    </button>
   );
 }
 

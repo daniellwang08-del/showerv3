@@ -171,7 +171,7 @@ function patchJob(jobId, patch) {
 
 let watchTimer = null;
 
-function docsComplete(d) {
+export function docsComplete(d) {
   const cover = d.coverPdf || d.coverDocx;
   if (docsResumeSource(d) === "original") return cover;
   return (d.resumePdf || d.resumeDocx) && cover;

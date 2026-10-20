@@ -978,6 +978,12 @@ button.row:hover,
   font-size: 12px;
 }
 
+.ready-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .today {
   display: grid;
   grid-template-columns: 1fr auto;

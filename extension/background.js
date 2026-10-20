@@ -445,8 +445,49 @@ async function isPanelOpen() {
   }
 }
 
+// Auto-apply runners register the tabs they drive under "aaTab:<tabId>".
+// Submits there belong to the runner: it confirms, marks applied and moves on,
+// so the panel hand-off and the global debounce below must not see them.
+const AA_TAB_PREFIX = "aaTab:";
+
+async function routeAutoApplySubmit(msg, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  if (tabId == null) return false;
+  const key = AA_TAB_PREFIX + tabId;
+  const data = await chrome.storage.session.get(key);
+  const entry = data && data[key];
+  if (!entry) return false;
+  chrome.runtime
+    .sendMessage({ type: "AA_SUBMITTED", tabId, jobId: entry.jobId, reason: msg.reason || "submit", url: msg.url || "" })
+    .catch(() => {});
+  return true;
+}
+
+const AUTO_APPLY_PAGE = "autoapply.html";
+
+async function openAutoApplyConsole() {
+  const url = chrome.runtime.getURL(AUTO_APPLY_PAGE);
+  const [existing] = await chrome.tabs.query({ url: url + "*" });
+  if (existing && existing.id != null) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId != null) await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
+    return existing.id;
+  }
+  const tab = await chrome.tabs.create({ url, active: true });
+  return tab.id;
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (!(msg && msg.type === "OPEN_AUTO_APPLY")) return false;
+  openAutoApplyConsole()
+    .then((tabId) => sendResponse({ ok: true, tabId }))
+    .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+  return true;
+});
+
 async function handleAppSubmitted(msg, sender) {
   try {
+    if (await routeAutoApplySubmit(msg, sender)) return;
     // Multi-frame submit-watch and Workday detection can both fire for one
     // submit; a second event must not complete the *next* job.
     const { lastAppSubmittedAt } = await chrome.storage.session.get("lastAppSubmittedAt");
@@ -473,6 +514,7 @@ async function handleAppSubmitted(msg, sender) {
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session.remove(AA_TAB_PREFIX + tabId).catch(() => {});
   chrome.storage.session
     .get("applyTabJobs")
     .then(({ applyTabJobs }) => {

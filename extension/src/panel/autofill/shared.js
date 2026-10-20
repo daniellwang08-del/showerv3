@@ -8,6 +8,18 @@ export function delay(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Parallel auto-apply runs share one OS focus: the console installs a gate that
+// focuses a tab only while no other run holds it.
+let focusGateFn = null;
+
+export function setFocusGate(fn) {
+  focusGateFn = typeof fn === "function" ? fn : null;
+}
+
+export function focusGate() {
+  return focusGateFn;
+}
+
 // Autofill payloads contain profile data, so tracing is opt-in:
 // run `localStorage.naoDebug = "1"` in the panel console to enable it.
 const DEBUG = (() => {

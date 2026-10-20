@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 
 from app.api.routes import get_current_user, require_applicant
 from app.core.logging import get_logger
-from app.services import nylas_service
+from app.services import nylas_service, verification_codes
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
@@ -79,6 +81,32 @@ async def mail_oauth_callback(
         logger.error("mail_oauth_callback_unexpected", error=str(e))
         return _redirect(mail="error", reason="unexpected")
     return _redirect(mail="connected")
+
+
+@router.get("/verification-code", dependencies=[Depends(require_applicant)])
+async def get_verification_code(
+    since: float = Query(..., description="Unix seconds; only mail received after this counts"),
+    company: str | None = Query(None, max_length=200),
+    exclude: str | None = Query(None, max_length=400, description="Comma-separated codes already tried"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Latest emailed application verification code, for auto-apply."""
+    async with get_session() as session:
+        row = await nylas_service.get_connection(session, current_user["user_id"])
+    if row is None or not nylas_service.configured():
+        return {"connected": False, "code": None}
+    if row.status == nylas_service.STATUS_NEEDS_REAUTH:
+        return {"connected": False, "code": None, "reason": "needs_reauth"}
+    try:
+        since_dt = datetime.fromtimestamp(since, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        raise HTTPException(status_code=400, detail="since must be unix seconds")
+    tried = {c.strip() for c in (exclude or "").split(",") if c.strip()}
+    try:
+        found = await verification_codes.find_code(row.grant_id, since=since_dt, company=company, exclude=tried)
+    except nylas_service.MailError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    return {"connected": True, "code": None, **(found or {})}
 
 
 @router.delete("/config", dependencies=[Depends(require_applicant)])

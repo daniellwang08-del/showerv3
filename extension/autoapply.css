@@ -1,0 +1,152 @@
+.aa-body {
+  overflow: auto;
+  min-height: 100vh;
+}
+
+.aa-page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.aa-page h1 {
+  font-size: 22px;
+  font-weight: 650;
+  margin: 0 0 4px;
+}
+
+.aa-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.aa-actions {
+  flex-shrink: 0;
+  min-width: 140px;
+}
+
+.aa-dim {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.aa-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.aa-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.aa-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.aa-num {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.aa-num-copy {
+  display: flex;
+  flex-direction: column;
+}
+
+.aa-num input {
+  width: 72px;
+  background: var(--muted);
+  color: var(--foreground);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.aa-platforms {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.aa-platforms th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  padding: 6px 4px;
+}
+
+.aa-platforms td {
+  padding: 5px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.aa-platforms th:not(:first-child),
+.aa-platforms td:not(:first-child) {
+  text-align: center;
+  width: 84px;
+}
+
+.aa-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.aa-row:first-child {
+  border-top: 0;
+}
+
+.aa-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.aa-row-title {
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aa-row-meta {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  margin-top: 2px;
+}
+
+.aa-row-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.aa-queue {
+  color: var(--muted-foreground);
+  font-size: 12.5px;
+  margin: 8px 0 4px;
+}
+
+@media (max-width: 820px) {
+  .aa-grid {
+    grid-template-columns: 1fr;
+  }
+}

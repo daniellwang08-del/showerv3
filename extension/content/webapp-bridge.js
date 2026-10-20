@@ -137,6 +137,19 @@
     }
     if (data.type === "CONNECT_EXTENSION") {
       void connectExtensionSession(data.requestId || null, event.origin || "*");
+      return;
+    }
+    if (data.type === "OPEN_AUTO_APPLY") {
+      const requestId = data.requestId || null;
+      const targetOrigin = event.origin || "*";
+      try {
+        chrome.runtime.sendMessage({ type: "OPEN_AUTO_APPLY" }, function (response) {
+          void chrome.runtime.lastError;
+          reply("OPEN_AUTO_APPLY_ACK", Object.assign({ requestId: requestId }, response || { ok: false }), targetOrigin);
+        });
+      } catch (_e) {
+        reply("OPEN_AUTO_APPLY_ACK", { requestId: requestId, ok: false, error: "Extension context invalidated. Reload the extension." }, targetOrigin);
+      }
     }
   });
 
