@@ -12,6 +12,7 @@ from sqlalchemy import select
 from app.api.routes import get_current_user
 from app.core.logging import get_logger
 from app.job_sites.base import AuthType, FetchContext
+from app.job_sites.errors import RateLimited
 from app.job_sites.registry import get_plugin, list_plugins
 from app.models.database import User, UserJobSiteConnection
 from app.services.job_source_boards import BoardJob
@@ -333,8 +334,18 @@ async def connect_job_site(
     if plugin.auth_type == AuthType.NONE:
         # Public feeds only need proof the search works; the queued sync pulls the full listing.
         ctx = replace(ctx, max_jobs=VERIFY_MAX_JOBS)
+    verify_deferred = False
     try:
         listing = [] if browser else await verify_and_fetch(plugin.slug, credentials, ctx)
+    except RateLimited as e:
+        if plugin.auth_type != AuthType.NONE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not fetch jobs from {plugin.name}: {e}",
+            ) from e
+        # A public feed has nothing to validate; a temporary block only delays the first sync.
+        logger.warning("job_site_connect_verify_deferred", slug=plugin.slug, error=str(e))
+        listing, verify_deferred = [], True
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
     except PermissionError as e:
@@ -376,7 +387,7 @@ async def connect_job_site(
         existing.credentials_encrypted = encrypted
         existing.enabled = True
         existing.last_error = None
-        existing.last_listing_count = None if browser else len(listing)
+        existing.last_listing_count = None if browser or verify_deferred else len(listing)
         existing.status = STATUS_CONNECTED
         existing.consecutive_failures = 0
         existing.next_sync_at = None

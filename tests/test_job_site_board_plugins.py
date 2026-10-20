@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.job_sites.base import AuthType, FetchContext
+from app.job_sites import html_fetch
 from app.job_sites.errors import RateLimited
 from app.job_sites.plugins import adzuna, browser_boards, welcometothejungle
 from app.job_sites.registry import get_plugin
@@ -64,6 +65,97 @@ def test_adzuna_needs_no_key_and_keeps_keywords():
 def test_adzuna_details_pages_are_fetched_by_extraction():
     assert _is_aggregator_domain("https://www.adzuna.com/details/123") is False
     assert _is_aggregator_domain("https://www.adzuna.com/land/ad/123") is True
+
+
+WAF_PAGE = "<html><head><title>Human Verification</title><script>window.gokuProps = {}</script></head></html>"
+
+
+def test_aws_waf_bot_check_is_detected():
+    assert html_fetch.is_bot_challenge(405, {"x-amzn-waf-action": "captcha"}, "")
+    assert html_fetch.is_bot_challenge(202, {}, WAF_PAGE)
+    assert html_fetch.is_bot_challenge(405, {}, WAF_PAGE)
+    assert not html_fetch.is_bot_challenge(200, {}, ADZUNA_SEARCH)
+    assert not html_fetch.is_bot_challenge(405, {}, "Method Not Allowed")
+
+
+@pytest.fixture
+def fake_html(monkeypatch):
+    """HtmlSession without network: ``pages`` maps a URL to the queue of outcomes it returns."""
+    state = SimpleNamespace(pages={}, sessions=[], calls=[])
+
+    class FakeSession:
+        def __init__(self, fingerprint):
+            self.fingerprint = fingerprint
+
+        def close(self):
+            pass
+
+    def new_session(self):
+        session = FakeSession(self._fingerprints[self._fingerprint_index % len(self._fingerprints)])
+        state.sessions.append(session.fingerprint)
+        return session
+
+    def sync_get(url, params, session):
+        key = url if not params else f"{url}?p={params.get('p')}"
+        state.calls.append(key)
+        outcome = state.pages[key].pop(0) if len(state.pages.get(key, [])) > 1 else state.pages[key][0]
+        if outcome == "waf":
+            raise html_fetch.BotChallenge("bot check", retry_after_seconds=3600)
+        return outcome
+
+    monkeypatch.setattr(html_fetch.HtmlSession, "_new_session", new_session)
+    monkeypatch.setattr(html_fetch, "_sync_get", sync_get)
+    monkeypatch.setattr(html_fetch, "CHALLENGE_BACKOFF_SECONDS", (0.0,))
+    monkeypatch.setattr(adzuna, "DETAIL_DELAY_SECONDS", 0)
+    return state
+
+
+@pytest.mark.asyncio
+async def test_bot_check_retries_on_a_fresh_session_with_another_fingerprint(fake_html):
+    fake_html.pages["https://x.test/"] = ["waf", "waf", "<ok>"]
+    async with html_fetch.HtmlSession() as http:
+        assert await http.get("https://x.test/") == "<ok>"
+    assert fake_html.sessions == ["chrome124", "chrome131", "safari17_0"]
+
+
+@pytest.mark.asyncio
+async def test_persistent_bot_check_is_a_rate_limit(fake_html):
+    fake_html.pages["https://x.test/"] = ["waf"]
+    async with html_fetch.HtmlSession() as http:
+        with pytest.raises(RateLimited):
+            await http.get("https://x.test/")
+    assert len(fake_html.calls) == html_fetch.CHALLENGE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_adzuna_recovers_from_a_one_off_bot_check(fake_html):
+    fake_html.pages["https://www.adzuna.com/search?p=1"] = ["waf", ADZUNA_SEARCH]
+    fake_html.pages["https://www.adzuna.com/search?p=2"] = ["<html></html>"]
+    for aid in ("5012345678", "5099999999"):
+        fake_html.pages[f"https://www.adzuna.com/details/{aid}"] = [ADZUNA_DETAILS]
+    jobs = await adzuna._fetch({"keywords": "senior software engineer"}, FetchContext(country_codes=("US",)))
+    assert [j.title for j in jobs] == ["Senior Software Engineer", "Backend Developer"]
+    assert all("We build things." in j.description for j in jobs)
+
+
+@pytest.mark.asyncio
+async def test_adzuna_keeps_cards_when_details_hit_a_bot_check(fake_html):
+    fake_html.pages["https://www.adzuna.com/search?p=1"] = [ADZUNA_SEARCH]
+    fake_html.pages["https://www.adzuna.com/search?p=2"] = ["waf"]
+    fake_html.pages["https://www.adzuna.com/details/5012345678"] = ["waf"]
+    fake_html.pages["https://www.adzuna.com/details/5099999999"] = [ADZUNA_DETAILS]
+    jobs = await adzuna._fetch({}, FetchContext(country_codes=("US",)))
+    assert [j.title for j in jobs] == ["Senior Software Engineer", "Backend Developer"]
+    assert [j.description for j in jobs] == ["", ""]
+
+
+def test_curl_http_errors_get_a_readable_reason():
+    exc = Exception("HTTP Error 405: ")
+    exc.response = SimpleNamespace(status_code=405)
+    assert sync.describe_fetch_error(exc) == "the site responded with HTTP 405. Try again in a few minutes."
+    assert sync.classify_failure(exc) == sync.FAILURE_TRANSIENT
+    exc.response = SimpleNamespace(status_code=429)
+    assert sync.classify_failure(exc) == sync.FAILURE_RATE_LIMITED
 
 
 WTTJ_HIT = {

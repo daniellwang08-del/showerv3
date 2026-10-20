@@ -70,6 +70,14 @@ def sync_interval(plugin: JobSitePlugin | None) -> timedelta:
     return timedelta(hours=hours)
 
 
+def _non_httpx_status(exc: Exception) -> int | None:
+    """Status code of a non-httpx HTTP error (curl_cffi's ``raise_for_status``)."""
+    if isinstance(exc, httpx.HTTPError):
+        return None
+    code = getattr(getattr(exc, "response", None), "status_code", None)
+    return code if isinstance(code, int) and code >= 400 else None
+
+
 def classify_failure(exc: Exception) -> str:
     if isinstance(exc, SessionExpired):
         return FAILURE_AUTH
@@ -87,6 +95,11 @@ def classify_failure(exc: Exception) -> str:
             return FAILURE_RATE_LIMITED
         if code in (400, 404, 405, 410):
             return FAILURE_CONFIG
+        return FAILURE_TRANSIENT
+    if _non_httpx_status(exc) == 429:
+        return FAILURE_RATE_LIMITED
+    if _non_httpx_status(exc) is not None:
+        # Public pages fetched as a browser: odd statuses are edge or bot-defence noise, not settings.
         return FAILURE_TRANSIENT
     if isinstance(exc, PermissionError):
         return FAILURE_AUTH
@@ -223,6 +236,11 @@ def describe_fetch_error(exc: Exception) -> str:
         return "the site took too long to respond."
     if isinstance(exc, httpx.RequestError):
         return "the site could not be reached."
+    code = _non_httpx_status(exc)
+    if code == 429:
+        return "the site is rate limiting requests (429). Try again in a few minutes."
+    if code is not None:
+        return f"the site responded with HTTP {code}. Try again in a few minutes."
     return str(exc) or type(exc).__name__
 
 

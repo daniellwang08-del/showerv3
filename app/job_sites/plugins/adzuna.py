@@ -16,7 +16,7 @@ from typing import Any
 from app.core.logging import get_logger
 from app.job_sites.base import AuthType, CredentialField, FetchContext, JobSitePlugin
 from app.job_sites.errors import RateLimited
-from app.job_sites.html_fetch import HtmlSession, html_to_text
+from app.job_sites.html_fetch import BotChallenge, HtmlSession, html_to_text
 from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
 
@@ -107,7 +107,12 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
     async with HtmlSession() as http:
         page = 1
         while len(jobs) < limit and page <= (limit + PAGE_SIZE - 1) // PAGE_SIZE + 1:
-            html = await http.get(f"{site}/search", params={"q": keywords, "sb": "date", "p": page})
+            try:
+                html = await http.get(f"{site}/search", params={"q": keywords, "sb": "date", "p": page})
+            except BotChallenge:
+                if not jobs:
+                    raise
+                break
             cards = parse_search_page(html, site)
             if not cards:
                 break
@@ -121,6 +126,9 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
             await asyncio.sleep(DETAIL_DELAY_SECONDS)
             try:
                 job.description = parse_details_page(await http.get(job.url))
+            except BotChallenge:
+                logger.warning("adzuna_details_bot_check", remaining_from=job.url)
+                break
             except RateLimited:
                 if throttled:
                     # Second throttle in a row: the rest keep their card data and
