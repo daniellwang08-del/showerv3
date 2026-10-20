@@ -89,10 +89,13 @@ export function JobSiteSheet({
       />
     );
   } else {
-    const savedSettings =
-      connection && (plugin.auth_type === 'none' || plugin.auth_type === 'browser')
-        ? connection.credential_hints
-        : undefined;
+    const savedSettings = connection
+      ? Object.fromEntries(
+          Object.entries(connection.credential_hints ?? {}).filter(([key]) =>
+            plugin.credential_fields.some((f) => f.key === key && !f.secret),
+          ),
+        )
+      : undefined;
     body = (
       <>
         <ConnectFlow key={plugin.slug} plugin={plugin} onConnected={onConnected} initialValues={savedSettings} />

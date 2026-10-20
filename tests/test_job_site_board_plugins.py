@@ -8,7 +8,7 @@ import pytest
 from app.job_sites.base import AuthType, FetchContext
 from app.job_sites import html_fetch
 from app.job_sites.errors import RateLimited
-from app.job_sites.plugins import adzuna, browser_boards, welcometothejungle
+from app.job_sites.plugins import adzuna, browser_boards, jsearch, welcometothejungle
 from app.job_sites.registry import get_plugin
 from app.services import job_site_connection_sync as sync
 from app.services.extraction_service import _is_aggregator_domain
@@ -147,6 +147,25 @@ async def test_adzuna_keeps_cards_when_details_hit_a_bot_check(fake_html):
     jobs = await adzuna._fetch({}, FetchContext(country_codes=("US",)))
     assert [j.title for j in jobs] == ["Senior Software Engineer", "Backend Developer"]
     assert [j.description for j in jobs] == ["", ""]
+
+
+@pytest.mark.asyncio
+async def test_jsearch_searches_the_users_keywords(monkeypatch):
+    seen = {}
+
+    async def fake_get_json(url, params=None, headers=None, **_kw):
+        seen.update(params=params, headers=headers)
+        return {"data": [{"job_title": "Data Engineer", "job_apply_link": "https://acme.test/1", "employer_name": "Acme"}]}
+
+    monkeypatch.setattr(jsearch, "get_json", fake_get_json)
+    jobs = await jsearch._fetch({"api_key": "k", "keywords": "  senior   data engineer "}, FetchContext(country_codes=("CA",)))
+    assert seen["params"]["query"] == "senior data engineer in Canada"
+    assert seen["headers"]["X-RapidAPI-Key"] == "k"
+    assert [j.title for j in jobs] == ["Data Engineer"]
+    assert jsearch.search_query({}, FetchContext()) == "software engineer in United States"
+    plugin = get_plugin("jsearch")
+    assert plugin.settings_from({"api_key": "k", "keywords": "ml engineer"}) == {"keywords": "ml engineer"}
+    assert sync.credential_hints("jsearch", {"api_key": "abcdefghijkl", "keywords": "ml engineer"})["keywords"] == "ml engineer"
 
 
 def test_curl_http_errors_get_a_readable_reason():

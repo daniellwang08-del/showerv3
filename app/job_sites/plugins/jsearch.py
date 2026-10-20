@@ -15,16 +15,23 @@ from app.job_sites.http import get_json
 from app.job_sites.registry import register
 from app.services.job_source_boards import BoardJob
 
+DEFAULT_KEYWORDS = "software engineer"
+
+
+def search_query(credentials: dict[str, Any], ctx: FetchContext) -> str:
+    keywords = " ".join(str(credentials.get("keywords") or "").split()) or DEFAULT_KEYWORDS
+    location = COUNTRY_NAMES.get(ctx.primary_country, "United States")
+    return f"{keywords} in {location}"
+
 
 async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJob]:
     api_key = str(credentials.get("api_key") or "").strip()
     if not api_key:
         raise ValueError("JSearch requires a RapidAPI key.")
-    location = COUNTRY_NAMES.get(ctx.primary_country, "United States")
     payload = await get_json(
         "https://jsearch.p.rapidapi.com/search",
         params={
-            "query": f"software engineer in {location}",
+            "query": search_query(credentials, ctx),
             "page": "1",
             "num_pages": "1",
             "date_posted": "week",
@@ -74,6 +81,17 @@ register(
                 label="RapidAPI key",
                 placeholder="your X-RapidAPI-Key",
                 help_url="https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch",
+            ),
+            CredentialField(
+                key="keywords",
+                label="Search keywords",
+                placeholder="software engineer",
+                secret=False,
+                required=False,
+                help_text=(
+                    "The job title or skills to search for. Jobs come from your preferred country. "
+                    "Leave empty to search for software engineer roles."
+                ),
             ),
         ),
         fetch=_fetch,
