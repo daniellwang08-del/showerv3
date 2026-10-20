@@ -32,7 +32,7 @@ const WATCH_SCRIPT_ID = "nao-job-site-watch";
  * restart it, while content scripts are re-read on every page load. That mix
  * produces confusing, impossible-looking errors without this stamp.
  */
-export const CONNECT_BUILD = "2026.10.19-cookie-store";
+export const CONNECT_BUILD = "2026.10.19-request-cookie";
 const STATE_KEY = "jobSiteConnectState";
 const SETTLE_MS = 1800;
 const NO_SITE_ACCESS =
@@ -298,6 +298,61 @@ async function hasHostAccess(domains) {
   }
 }
 
+function cookiesFromHeader(header) {
+  if (!active || !header) return [];
+  const domain = `.${normalizeDomain(active.cookieDomains[0])}`;
+  const out = [];
+  for (const part of String(header).split(";")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const name = part.slice(0, eq).trim();
+    if (!name) continue;
+    out.push({
+      name,
+      value: part.slice(eq + 1).trim(),
+      domain,
+      path: "/",
+      secure: true,
+      httpOnly: cookieNameMatches(name, active.sessionCookieNames),
+      sameSite: "",
+      expirationDate: undefined,
+    });
+  }
+  return out;
+}
+
+/** Make the board tab send one same-origin request so its Cookie header is observed. */
+async function pokeSiteTab() {
+  if (!active || active.siteTabId == null) return;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: active.siteTabId },
+      func: () =>
+        fetch(location.href, { credentials: "include", cache: "no-store" })
+          .then(() => true)
+          .catch(() => false),
+    });
+  } catch (err) {
+    warn("cookies:poke_failed", { error: String((err && err.message) || err) });
+  }
+}
+
+/**
+ * Fallback for browsers where chrome.cookies returns nothing (Chrome now runs
+ * a tab-less page-access check for it): the Cookie header the board tab
+ * itself sends, observed through webRequest. It carries httpOnly cookies.
+ */
+async function requestHeaderCookies() {
+  if (!active || active.siteTabId == null || !chrome.webRequest) return [];
+  if (!active.requestCookie) {
+    await pokeSiteTab();
+    for (let i = 0; i < 5 && active && !active.requestCookie; i += 1) await new Promise((r) => setTimeout(r, 150));
+  }
+  const cookies = cookiesFromHeader(active && active.requestCookie);
+  log("cookies:from_request_header", { count: cookies.length, names: cookies.map((c) => c.name) });
+  return cookies;
+}
+
 async function collectCookies() {
   if (!active) return [];
   const out = [];
@@ -323,6 +378,7 @@ async function collectCookies() {
     }
     log("cookies:read", { domain, storeId: storeId || "default", count: (list || []).length });
   }
+  if (!out.length) out.push(...(await requestHeaderCookies()));
   if (!out.length) {
     const access = await hasHostAccess(active.cookieDomains);
     let stores = [];
@@ -639,7 +695,46 @@ function onPageReport(msg, sender) {
   });
 }
 
+function onSendHeaders(details) {
+  if (!details || details.tabId == null || details.tabId < 0) return;
+  if (active && details.tabId !== active.siteTabId) return;
+  withActive(async (state) => {
+    if (details.tabId !== state.siteTabId || !isTrackedUrl(details.url)) return;
+    const header = (details.requestHeaders || []).find((h) => String(h.name).toLowerCase() === "cookie");
+    const value = header && header.value ? String(header.value) : "";
+    if (!value || value === state.requestCookie) return;
+    const first = !state.requestCookie;
+    const sessionOf = (h) =>
+      cookiesFromHeader(h)
+        .filter((c) => c.httpOnly)
+        .map((c) => `${c.name}=${c.value}`)
+        .join(";");
+    const newLogin = !first && state.captured && sessionOf(value) && sessionOf(value) !== sessionOf(state.requestCookie);
+    state.requestCookie = value;
+    if (newLogin) state.captured = false;
+    await persist();
+    if (newLogin) scheduleSettle(state.lastUrl, "webRequest.session_changed");
+    if (first) {
+      log("cookies:request_header_seen", {
+        url: details.url.split("?")[0],
+        names: cookiesFromHeader(value).map((c) => c.name),
+      });
+    }
+  });
+}
+
+function bindWebRequest() {
+  if (!chrome.webRequest || !chrome.webRequest.onSendHeaders) return;
+  const filter = { urls: ["https://*/*"] };
+  try {
+    chrome.webRequest.onSendHeaders.addListener(onSendHeaders, filter, ["requestHeaders", "extraHeaders"]);
+  } catch {
+    chrome.webRequest.onSendHeaders.addListener(onSendHeaders, filter, ["requestHeaders"]);
+  }
+}
+
 function bindListeners() {
+  bindWebRequest();
   chrome.tabs.onUpdated.addListener(onTabUpdated);
   chrome.tabs.onRemoved.addListener(onTabRemoved);
   if (chrome.webNavigation) {
@@ -719,6 +814,7 @@ export async function startConnect(rawSession, sender) {
     lastUrl: "",
     captured: false,
     retriedVerifyUrl: false,
+    requestCookie: "",
   };
   hydrated = true;
   await persist();

@@ -27,6 +27,9 @@ const jars = { 0: [], 1: [] };
 const stores = [{ id: "0", tabIds: [] }, { id: "1", tabIds: [] }];
 const sent = [];
 let hostAccess = true;
+let cookiesApiBlocked = false;
+let tabCookieHeader = "";
+let lastTabId = null;
 let nextTab = 100;
 let tabStore = "1";
 
@@ -39,6 +42,7 @@ globalThis.chrome = {
     onRemoved: event(),
     async create({ url, windowId }) {
       const id = nextTab++;
+      lastTabId = id;
       stores.find((s) => s.id === tabStore).tabIds.push(id);
       return { id, windowId: windowId ?? 1, url };
     },
@@ -61,7 +65,7 @@ globalThis.chrome = {
       return stores;
     },
     async getAll({ domain, storeId }) {
-      if (!hostAccess) return [];
+      if (!hostAccess || cookiesApiBlocked) return [];
       return jars[storeId || "0"].filter((c) => c.domain.replace(/^\./, "").endsWith(domain));
     },
   },
@@ -69,10 +73,21 @@ globalThis.chrome = {
     async registerContentScripts() {},
     async unregisterContentScripts() {},
     async executeScript() {
+      // Any script run in the board tab makes it send a request carrying its cookies.
+      if (tabCookieHeader) sendTabRequest(tabCookieHeader);
       return [{ result: { localStorage: {}, sessionStorage: {}, href: "x" } }];
     },
   },
+  webRequest: { onSendHeaders: event() },
 };
+
+function sendTabRequest(cookie) {
+  chrome.webRequest.onSendHeaders.fire({
+    tabId: lastTabId,
+    url: "https://jobright.ai/swan/user/info",
+    requestHeaders: [{ name: "Cookie", value: cookie }],
+  });
+}
 
 console.log = () => {};
 console.warn = () => {};
@@ -107,12 +122,28 @@ test("a signed-in tab in a non-default cookie store (Incognito) is captured from
   assert.deepEqual(sessions()[0].cookies.map((c) => c.value), ["incognito"]);
 });
 
+test("when chrome.cookies returns nothing, the session comes from the board tab's own Cookie header", async () => {
+  sent.length = 0;
+  cookiesApiBlocked = true;
+  tabCookieHeader = "_ga=GA1.1; SESSION_ID=from-header";
+  const { tabId } = await mod.startConnect(SESSION, { tab: { id: 7, windowId: 9 } });
+  land(tabId, RECOMMEND);
+  await sleep(2600);
+  assert.equal(sessions().length, 1);
+  const cookie = sessions()[0].cookies.find((c) => c.name === "SESSION_ID");
+  assert.equal(cookie.value, "from-header");
+  assert.equal(cookie.domain, ".jobright.ai");
+  assert.equal(cookie.httpOnly, true);
+  cookiesApiBlocked = false;
+  tabCookieHeader = "";
+});
+
 test("missing host access is reported instead of asking the user to sign in again", async () => {
   sent.length = 0;
   hostAccess = false;
   const { tabId } = await mod.startConnect(SESSION, { tab: { id: 7, windowId: 9 } });
   land(tabId, RECOMMEND);
-  await sleep(2100);
+  await sleep(2900);
   assert.equal(sessions().length, 0);
   assert.ok(sent.some((m) => m.type === "JOB_SITE_CONNECT_STATUS" && m.state === "no_site_access"));
   await assert.rejects(mod.captureNow(), /Site access/);
