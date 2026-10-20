@@ -118,20 +118,33 @@ function useNow(intervalMs: number): number {
 
 const PILL = 'inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/60 px-2.5 py-1 backdrop-blur';
 
-function BackLink({ preview }: { preview?: boolean }) {
+export type ReportBack = { to: string; label: string };
+
+function BackLink({ preview, back }: { preview?: boolean; back?: ReportBack }) {
   const base = sharedBase(useLocation().pathname);
   return (
     <Link
-      to={preview ? '/app/interviews' : base}
+      to={back?.to ?? (preview ? '/app/interviews' : base)}
       className={cn(PILL, 'font-medium text-foreground transition-colors hover:bg-muted')}
     >
       <ArrowLeft className="size-3" aria-hidden />
-      {preview ? 'Interviews' : 'Shared with me'}
+      {back?.label ?? (preview ? 'Interviews' : 'Shared with me')}
     </Link>
   );
 }
 
-export function SharedReportView({ data, preview = false }: { data: SharedReportResponse; preview?: boolean }) {
+export function SharedReportView({
+  data,
+  preview = false,
+  back,
+  context,
+}: {
+  data: SharedReportResponse;
+  preview?: boolean;
+  back?: ReportBack;
+  /** Replaces the "shared with you" line, e.g. for a team lead's view. */
+  context?: string;
+}) {
   const { report, share } = data;
   const now = useNow(60_000);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -163,7 +176,7 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
 
   const actionsBar = (
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      <BackLink preview={preview} />
+      <BackLink preview={preview} back={back} />
       {preview ? (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-2.5 py-1 font-medium text-brand">
           <Eye className="size-3.5" aria-hidden />
@@ -195,9 +208,11 @@ export function SharedReportView({ data, preview = false }: { data: SharedReport
         description={
           <>
             {report.owner.headline ? <span className="font-medium text-foreground">{report.owner.headline}. </span> : null}
-            {share
-              ? `Shared with you${share.shared_at ? ` on ${shortDate(share.shared_at)}` : ''}. A live view of interviews and applications.`
-              : 'A live view of interviews and applications.'}
+            {context
+              ? `${context} A live view of interviews and applications.`
+              : share
+                ? `Shared with you${share.shared_at ? ` on ${shortDate(share.shared_at)}` : ''}. A live view of interviews and applications.`
+                : 'A live view of interviews and applications.'}
           </>
         }
         width="full"
@@ -569,7 +584,7 @@ function ApplicationRow({ app, now, onOpen }: { app: ReportApplication; now: num
   );
 }
 
-function ReportLoading() {
+export function ReportLoading() {
   return (
     <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 lg:p-8" aria-busy="true" aria-label="Loading report">
       <Skeleton className="h-36 w-full rounded-2xl" />

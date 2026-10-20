@@ -134,6 +134,11 @@ class UserRepository:
 
         self.session.add(user)
         await self.session.flush()
+        if not is_first_admin:
+            from app.services import store_service
+
+            await store_service.grant_signup_bonus(self.session, user)
+            await store_service.claim_pending(self.session, user)
         logger.info(
             "user_created",
             user_id=user.id,
@@ -531,6 +536,11 @@ class UserRepository:
         logger.info("dedup_recycle_days_updated", user_id=user_id, days=days)
         return True
 
+    async def _sharing_lock_info(self, user_id: str) -> dict:
+        from app.services.team_service import sharing_lock_info
+
+        return await sharing_lock_info(self.session, user_id)
+
     async def get_user_settings(self, user_id: str) -> dict | None:
         user = await self.get_by_id(user_id)
         if not user:
@@ -640,6 +650,7 @@ class UserRepository:
                 in ("private", "team", "all")
                 else "private"
             ),
+            **(await self._sharing_lock_info(user_id)),
             "resume_filename_mode": (
                 "static"
                 if str(getattr(user, "resume_filename_mode", None) or "pattern").strip().lower()
@@ -860,6 +871,11 @@ class UserRepository:
                 share = "private"
             if share not in ("private", "team", "all"):
                 raise ValueError("job_share_default must be 'private', 'team', or 'all'")
+            from app.services.team_service import locked_share_scope
+
+            locked = await locked_share_scope(self.session, user_id)
+            if locked is not None and share != locked:
+                raise ValueError("Your team lead manages your default sharing.")
             user.job_share_default = share
 
         if resume_filename_mode is not None or resume_filename_value is not None:

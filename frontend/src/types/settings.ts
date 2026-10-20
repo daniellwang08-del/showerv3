@@ -76,6 +76,10 @@ export interface UserSettings {
   manual_submit_pipeline: 'extract' | 'match' | 'full';
   /** Starting share for jobs this user adds: private | team | all | ask */
   job_share_default: JobShareDefault;
+  /** True when a team lead pinned job_share_default; the member cannot change it. */
+  job_share_locked: boolean;
+  team_space_name: string | null;
+  team_space_public_id: string | null;
   resume_filename_mode: ResumeFilenameMode;
   resume_filename_value: string;
   resume_tailoring_prompt_mode: SettingsMode;

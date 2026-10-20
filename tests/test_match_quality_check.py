@@ -164,9 +164,15 @@ def test_all_scope_reaches_everyone():
     assert run(users_who_can_see_job(session, "j", ["owner", "other"])) == {"owner", "other"}
 
 
-def test_team_scope_uses_approved_members():
-    session = _ScriptedSession(OWNED, [("b1", "owner", "team")], [("teammate",)])
+def test_team_scope_reaches_people_in_the_owners_team_space():
+    # owned spaces, member spaces, then everyone in those spaces
+    session = _ScriptedSession(OWNED, [("b1", "owner", "team")], [("s1",)], [], [("owner",), ("teammate",)])
     assert run(users_who_can_see_job(session, "j", ["owner", "teammate", "admin"])) == {"owner", "teammate"}
+
+
+def test_team_scope_without_a_team_space_stays_with_the_owner():
+    session = _ScriptedSession(OWNED, [("b1", "owner", "team")], [], [])
+    assert run(users_who_can_see_job(session, "j", ["owner", "other"])) == {"owner"}
 
 
 def test_users_scope_uses_share_list():

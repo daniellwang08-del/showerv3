@@ -117,23 +117,17 @@ def job_owner_id_expr():
     )
 
 
-def _viewer_is_team_clause(user_id: str):
-    return exists(
-        select(1).select_from(User).where(
-            User.id == user_id,
-            User.is_admin.is_(False),
-            User.is_active.is_(True),
-            User.approval_status == _TEAM_APPROVED,
-        )
-    )
-
-
 def job_share_visibility_clause(user_id: str):
-    """Owner always; otherwise a granting add session; unowned, unbatched inventory is public."""
+    """Owner always; otherwise a granting add session; unowned, unbatched inventory is public.
+
+    ``team`` grants the people who share a team space with the batch owner.
+    """
+    from app.services.team_service import teammates_clause
+
     grant = or_(
         JobAddBatch.user_id == user_id,
         JobAddBatch.share_scope == "all",
-        and_(JobAddBatch.share_scope == "team", _viewer_is_team_clause(user_id)),
+        and_(JobAddBatch.share_scope == "team", teammates_clause(JobAddBatch.user_id, user_id)),
         and_(
             JobAddBatch.share_scope == "users",
             exists(
@@ -186,7 +180,7 @@ async def users_who_can_see_job(
     visible: set[str] = {owner} & candidates if owner else set()
     if not batches:
         return visible if owner else candidates
-    team_batch = False
+    team_owners: set[str] = set()
     user_batch_ids: list[str] = []
     for batch_id, owner_id, scope in batches:
         if scope == "all":
@@ -194,19 +188,14 @@ async def users_who_can_see_job(
         if owner_id in candidates:
             visible.add(owner_id)
         if scope == "team":
-            team_batch = True
+            team_owners.add(owner_id)
         elif scope == "users":
             user_batch_ids.append(batch_id)
-    if team_batch:
-        team = await session.execute(
-            select(User.id).where(
-                User.id.in_(candidates),
-                User.is_admin.is_(False),
-                User.is_active.is_(True),
-                User.approval_status == _TEAM_APPROVED,
-            )
-        )
-        visible.update(row[0] for row in team.all())
+    if team_owners:
+        from app.services.team_service import teammate_ids
+
+        for owner_id in team_owners:
+            visible.update(await teammate_ids(session, owner_id) & candidates)
     if user_batch_ids:
         shared = await session.execute(
             select(JobAddBatchShareUser.user_id).where(
@@ -387,8 +376,13 @@ async def create_batch(
     if user is None:
         return None
 
+    from app.services.team_service import locked_share_scope
+
+    locked = await locked_share_scope(session, user_id)
     scope = normalize_share_scope(share_scope, default="") if share_scope else ""
-    if not scope:
+    if locked is not None:
+        scope = locked
+    elif not scope:
         scope = initial_scope_from_default(getattr(user, "job_share_default", None))
 
     now = utcnow()
@@ -499,6 +493,11 @@ async def update_share(
     scope = normalize_share_scope(share_scope, default="")
     if scope not in SHARE_SCOPES:
         raise ValueError("share_scope must be private, team, all, or users")
+    from app.services.team_service import locked_share_scope
+
+    locked = await locked_share_scope(session, user_id)
+    if locked is not None and scope != locked:
+        raise ValueError("Your team lead manages how your jobs are shared.")
 
     people: list[User] = []
     if scope == "users":

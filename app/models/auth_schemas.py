@@ -83,6 +83,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     approval_status: str = "approved"
     approved_at: datetime | None = None
+    credit_balance: int = 0
 
 
 class ProfileUpdateRequest(BaseModel):

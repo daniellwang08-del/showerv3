@@ -5,6 +5,7 @@ import type { AdminUser } from '@/types/admin';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { AdminStoreSection } from './AdminStoreSection';
 import { ConfirmActionDialog } from './ConfirmActionDialog';
 import { ResetPasswordForm } from './ResetPasswordForm';
 import { formatDate, RoleBadge, StatusBadge, YouBadge } from './UserBadges';
@@ -134,6 +135,18 @@ function SheetBody({
             </DetailRow>
           </dl>
         </Section>
+
+        {!user.is_admin && (
+          <>
+            <Separator />
+            <Section
+              title="Packages and credits"
+              description="Payments are not live yet. Granted packages land in the user's store, where they add them to their balance or open a team space."
+            >
+              <AdminStoreSection key={user.id} userId={user.id} />
+            </Section>
+          </>
+        )}
 
         <Separator />
 

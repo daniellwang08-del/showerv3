@@ -41,6 +41,8 @@ from app.api.job_sites_routes import router as job_sites_router
 from app.api.mail_routes import router as mail_router
 from app.api.interview_routes import router as interview_router
 from app.api.report_share_routes import router as report_share_router
+from app.api.store_routes import router as store_router
+from app.api.team_routes import router as team_router
 from app.api.document_routes import router as document_router
 from app.api.logs_routes import router as logs_router
 from app.api.websocket import ws_router, manager as ws_manager
@@ -417,6 +419,8 @@ def create_app() -> FastAPI:
     app.include_router(mail_router, prefix="/api/v1")
     app.include_router(interview_router, prefix="/api/v1")
     app.include_router(report_share_router, prefix="/api/v1")
+    app.include_router(store_router, prefix="/api/v1")
+    app.include_router(team_router, prefix="/api/v1")
     app.include_router(document_router, prefix="/api/v1")
     app.include_router(ws_router, prefix="/api/v1")
 

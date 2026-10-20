@@ -47,7 +47,7 @@ export function JobAddHistory() {
               {batch.share_scope === 'private' ? <Check className="ml-auto" /> : null}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => void share(batch.id, 'team')}>
-              Share with the team
+              Share with my team space
               {batch.share_scope === 'team' ? <Check className="ml-auto" /> : null}
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => void share(batch.id, 'all')}>

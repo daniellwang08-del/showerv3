@@ -100,6 +100,9 @@ function normalizeUserSettings(data: Partial<UserSettings>): UserSettings {
     )
       ? (data.job_share_default as 'private' | 'team' | 'all')
       : 'private',
+    job_share_locked: Boolean(data.job_share_locked),
+    team_space_name: typeof data.team_space_name === 'string' ? data.team_space_name : null,
+    team_space_public_id: typeof data.team_space_public_id === 'string' ? data.team_space_public_id : null,
     resume_filename_mode: data.resume_filename_mode === 'static' ? 'static' : 'pattern',
     resume_filename_value: String(data.resume_filename_value ?? '{firstname}_{lastname}_{kind}'),
     resume_tailoring_prompt_mode: (data.resume_tailoring_prompt_mode as SettingsMode) ?? 'default',

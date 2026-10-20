@@ -31,6 +31,11 @@ vi.mock('@/api/adminApi', () => ({
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({ user: { id: 'u1', email: 'me@nao.dev', is_admin: true } }),
 }));
+vi.mock('@/api/storeApi', () => ({
+  fetchAdminStore: vi.fn().mockResolvedValue({ balance: 50, held: {}, team_spaces: 0, ledger: [], catalog: [] }),
+  adminGrant: vi.fn(),
+  adminAdjust: vi.fn(),
+}));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const fetchMock = vi.mocked(fetchAdminUsers);

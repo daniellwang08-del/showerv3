@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Lock, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { SectionCard } from '@/components/app/PageLayout';
 import { SaveBar } from '@/components/app/SaveBar';
@@ -163,12 +163,24 @@ export function JobSearchTab({
 
       <SectionCard
         title="When you add jobs"
-        description="Every job you add is stored with this sharing. You can change it later for a single add from the sidebar history."
+        description={
+          settings.job_share_locked
+            ? `Your team lead set this for ${settings.team_space_name ?? 'your team'}. Jobs you add are always stored with this sharing.`
+            : 'Every job you add is stored with this sharing. You can change it later for a single add from the sidebar history.'
+        }
+        actions={
+          settings.job_share_locked ? (
+            <Badge variant="secondary" className="gap-1">
+              <Lock className="size-3" aria-hidden />
+              Set by your team lead
+            </Badge>
+          ) : null
+        }
       >
         <RadioGroup
           aria-label="Default sharing for jobs you add"
           value={settings.job_share_default}
-          disabled={savingShare}
+          disabled={savingShare || settings.job_share_locked}
           onValueChange={(value) => {
             const next = value as JobShareDefault;
             if (next === settings.job_share_default) return;

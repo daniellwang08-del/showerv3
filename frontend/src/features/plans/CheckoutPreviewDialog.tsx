@@ -11,44 +11,64 @@ import {
 } from '@/components/ui/dialog';
 import {
   BASE_RATE_CENTS,
-  type CreditPackage,
+  type CheckoutOffer,
   formatCount,
   formatRate,
   formatUsd,
   savingsCents,
+  TEAM_PLAN,
   totalCents,
 } from './plansModel';
 
-export function CheckoutPreviewDialog({ pkg, onClose }: { pkg: CreditPackage | null; onClose: () => void }) {
+export function CheckoutPreviewDialog({ offer, onClose }: { offer: CheckoutOffer | null; onClose: () => void }) {
   return (
-    <Dialog open={pkg !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={offer !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-md">
-        {pkg ? (
+        {offer?.kind === 'credits' ? (
           <>
             <DialogHeader>
-              <DialogTitle>Buy {pkg.name} credits</DialogTitle>
-              <DialogDescription>One-time purchase. Credits are added to your balance and never expire.</DialogDescription>
+              <DialogTitle>Buy {offer.pkg.name} credits</DialogTitle>
+              <DialogDescription>
+                One-time purchase. The package goes to your store: add it to your balance or give it to someone by email.
+              </DialogDescription>
             </DialogHeader>
 
             <dl className="divide-y divide-border/60 rounded-xl border border-border/60 bg-muted/30 text-sm">
-              <Row label="Credits" value={formatCount(pkg.credits)} />
-              <Row label="Price per job" value={formatRate(pkg.rateCents)} />
-              {savingsCents(pkg) > 0 ? (
+              <Row label="Credits" value={formatCount(offer.pkg.credits)} />
+              <Row label="Price per job" value={formatRate(offer.pkg.rateCents)} />
+              {savingsCents(offer.pkg) > 0 ? (
                 <Row
                   label={`Saved vs ${formatRate(BASE_RATE_CENTS)} per job`}
-                  value={`-${formatUsd(savingsCents(pkg))}`}
+                  value={`-${formatUsd(savingsCents(offer.pkg))}`}
                   tone="text-status-ready"
                 />
               ) : null}
-              <Row label="Total" value={formatUsd(totalCents(pkg))} strong />
+              <Row label="Total" value={formatUsd(totalCents(offer.pkg))} strong />
             </dl>
+          </>
+        ) : offer?.kind === 'team' ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Buy a TEAM package</DialogTitle>
+              <DialogDescription>
+                One-time purchase. Use it to open one team space, or give it to the person who will lead the team.
+              </DialogDescription>
+            </DialogHeader>
 
+            <dl className="divide-y divide-border/60 rounded-xl border border-border/60 bg-muted/30 text-sm">
+              <Row label="Team spaces" value="1" />
+              <Row label="Members" value="No limit" />
+              <Row label="Total" value={formatUsd(TEAM_PLAN.priceCents)} strong />
+            </dl>
+          </>
+        ) : null}
+
+        {offer ? (
+          <>
             <Alert>
               <Lock />
               <AlertTitle>Checkout opens soon</AlertTitle>
-              <AlertDescription>
-                Payments are being set up. Nothing has been charged.
-              </AlertDescription>
+              <AlertDescription>Payments are being set up. Nothing has been charged.</AlertDescription>
             </Alert>
 
             <DialogFooter>

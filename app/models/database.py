@@ -150,6 +150,8 @@ class User(Base):
     # Starting share for jobs this user adds: private | team | all | ask.
     # ask keeps the add private and prompts after the add.
     job_share_default = Column(String(16), default="private", nullable=False, server_default="private")
+    # Cached sum of credit_ledger.delta; every change writes a ledger row in the same transaction.
+    credit_balance = Column(Integer, default=0, nullable=False, server_default="0")
     resume_filename_mode = Column(String(20), default="pattern", nullable=False, server_default="pattern")
     resume_filename_value = Column(
         String(200),
@@ -1178,6 +1180,97 @@ class SignupAccessKey(Base):
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
+
+
+class UserPackage(Base):
+    """A purchased or granted package sitting in someone's store until it is used.
+
+    Credit packages turn into balance when redeemed; a TEAM package turns into
+    one team space. A gift to an email with no account waits with
+    ``owner_user_id`` NULL and is claimed when that email signs up.
+    """
+    __tablename__ = "user_packages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    code = Column(String(20), nullable=False)
+    # credits | team
+    kind = Column(String(16), nullable=False)
+    credits = Column(Integer, nullable=False, server_default="0")
+    price_cents = Column(Integer, nullable=False, server_default="0")
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    owner_email = Column(String(255), nullable=True, index=True)
+    # held | redeemed
+    status = Column(String(16), nullable=False, server_default="held")
+    # admin_grant | purchase | gift
+    source = Column(String(16), nullable=False, server_default="admin_grant")
+    gifted_from_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    granted_by_user_id = Column(String(36), nullable=True)
+    redeemed_at = Column(DateTime, nullable=True)
+    redeemed_ref = Column(String(36), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class CreditLedgerEntry(Base):
+    """Every change to a user's credit balance, newest last."""
+    __tablename__ = "credit_ledger"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    delta = Column(Integer, nullable=False)
+    balance_after = Column(Integer, nullable=False)
+    # signup_bonus | package | admin_adjust
+    reason = Column(String(32), nullable=False)
+    ref_id = Column(String(36), nullable=True)
+    note = Column(String(300), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_credit_ledger_user_created", "user_id", "created_at"),
+    )
+
+
+class TeamSpace(Base):
+    """A team created from one TEAM package. The owner is the team lead."""
+    __tablename__ = "team_spaces"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Shown to people: "nao-" plus 8 digits.
+    public_id = Column(String(12), nullable=False, unique=True)
+    name = Column(String(80), nullable=False)
+    owner_user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    package_id = Column(String(36), ForeignKey("user_packages.id", ondelete="SET NULL"), nullable=True, unique=True)
+    # Applied to people when they join; NULL default leaves their own choice.
+    default_share_scope = Column(String(16), nullable=True)
+    default_share_locked = Column(Boolean, nullable=False, server_default="false")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class TeamMember(Base):
+    """A member of a team space. A person belongs to at most one space; the lead is not a member row."""
+    __tablename__ = "team_members"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_space_id = Column(String(36), ForeignKey("team_spaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    # When locked, the member's job_share_default is pinned to this value.
+    share_locked = Column(Boolean, nullable=False, server_default="false")
+    joined_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
+class TeamInvite(Base):
+    """An invitation by email. It works for emails that sign up later too."""
+    __tablename__ = "team_invites"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    team_space_id = Column(String(36), ForeignKey("team_spaces.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    invited_by_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # pending | accepted | declined | revoked
+    status = Column(String(16), nullable=False, server_default="pending")
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    responded_at = Column(DateTime, nullable=True)
 
 
 class SystemSetting(Base):

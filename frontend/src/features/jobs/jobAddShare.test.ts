@@ -43,7 +43,7 @@ describe('job add share copy', () => {
     expect(addNoticeDescription(batch())).toBe('Private. Only you can see them.');
     expect(addNoticeDescription(batch({ job_count: 1 }))).toBe('Private. Only you can see it.');
     expect(addNoticeDescription(batch({ share_scope: 'team' }))).toBe(
-      'Shared with the team. Teammates can see them in their jobs list.',
+      'Shared with your team space. Teammates can see them in their jobs list.',
     );
     expect(addNoticeDescription(batch({ share_scope: 'all', job_count: 1 }))).toBe(
       'Shared with everyone. Every approved account can see it.',

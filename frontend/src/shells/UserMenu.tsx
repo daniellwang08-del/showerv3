@@ -1,5 +1,9 @@
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { ChevronsUpDown, Coins, LogOut, Moon, Sun } from 'lucide-react';
+import { ChevronsUpDown, Coins, LogOut, Moon, Sun, UsersRound } from 'lucide-react';
+import { fetchStore } from '@/api/storeApi';
+import { fetchTeamOverview } from '@/api/teamApi';
+import { STORE_KEY, TEAM_OVERVIEW_KEY } from '@/features/plans/storeModel';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -14,6 +18,34 @@ import { cn } from '@/lib/utils';
 import { useThemeStore } from '@/stores/themeStore';
 
 export type ShellUser = { name?: string | null; email?: string | null };
+
+const credits = new Intl.NumberFormat('en-US');
+
+function ApplicantItems({ onNavigate }: { onNavigate: (to: string) => void }) {
+  const store = useQuery({ queryKey: STORE_KEY, queryFn: fetchStore, staleTime: 5 * 60_000 });
+  const team = useQuery({ queryKey: TEAM_OVERVIEW_KEY, queryFn: fetchTeamOverview, staleTime: 5 * 60_000 });
+  const invites = team.data?.invites.length ?? 0;
+  return (
+    <DropdownMenuGroup>
+      <DropdownMenuItem onClick={() => onNavigate('/app/plans')}>
+        <Coins />
+        Plans
+        {store.data ? (
+          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{credits.format(store.data.balance)} credits</span>
+        ) : null}
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={() => onNavigate('/app/team')}>
+        <UsersRound />
+        Team
+        {invites ? (
+          <span className="ml-auto rounded-full bg-brand px-1.5 text-[11px] font-semibold text-brand-foreground tabular-nums">
+            {invites}
+          </span>
+        ) : null}
+      </DropdownMenuItem>
+    </DropdownMenuGroup>
+  );
+}
 
 export function UserMenu({
   user,
@@ -61,14 +93,7 @@ export function UserMenu({
           <DropdownMenuLabel className="truncate">{user.email || displayName}</DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        {variant === 'applicant' ? (
-          <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => navigate('/app/plans')}>
-              <Coins />
-              Plans
-            </DropdownMenuItem>
-          </DropdownMenuGroup>
-        ) : null}
+        {variant === 'applicant' ? <ApplicantItems onNavigate={navigate} /> : null}
         <DropdownMenuItem onClick={toggleTheme} closeOnClick={false}>
           {theme === 'dark' ? <Sun /> : <Moon />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}

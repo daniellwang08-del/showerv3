@@ -35,6 +35,16 @@ export const PACKAGES: readonly CreditPackage[] = [
   },
 ];
 
+/** One TEAM package opens one team space for good. */
+export const TEAM_PLAN = {
+  id: 'team',
+  name: 'TEAM',
+  priceCents: 2000,
+  tagline: 'For team leads who run a group search.',
+} as const;
+
+export type CheckoutOffer = { kind: 'credits'; pkg: CreditPackage } | { kind: 'team' };
+
 const count = new Intl.NumberFormat('en-US');
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 2 });
 

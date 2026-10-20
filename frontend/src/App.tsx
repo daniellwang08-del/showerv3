@@ -45,6 +45,8 @@ const SharedReportPage = named(() => import('./features/sharing/SharedReportPage
 const ReportPreviewPage = named(() => import('./features/sharing/SharedReportPage'), 'ReportPreviewPage');
 const SharedWithMePage = named(() => import('./features/sharing/SharedWithMePage'), 'SharedWithMePage');
 const PlansPage = named(() => import('./features/plans/PlansPage'), 'PlansPage');
+const TeamPage = named(() => import('./features/team/TeamPage'), 'TeamPage');
+const TeamMemberReportPage = named(() => import('./features/team/TeamMemberReportPage'), 'TeamMemberReportPage');
 const DocumentsPage = named(() => import('./features/documents/DocumentsPage'), 'DocumentsPage');
 const ResumeStudioPage = named(() => import('./features/studio/ResumeStudioPage'), 'ResumeStudioPage');
 const AdminDataPage = named(() => import('./features/admin/data/AdminDataPage'), 'AdminDataPage');
@@ -517,6 +519,11 @@ function App() {
           <Route path="preferences" element={<Page><PreferencesPage /></Page>} />
           <Route path="integrations" element={<Page><IntegrationsPage /></Page>} />
           <Route path="plans" element={<Page><PlansPage /></Page>} />
+          <Route path="team" element={<Page title="Team"><TeamPage /></Page>} />
+          <Route
+            path="team/:spaceId/members/:userId"
+            element={<Page title="Team member"><TeamMemberReportPage /></Page>}
+          />
           <Route path="billing" element={<LegacyRedirect to="/app/plans" />} />
           <Route path="*" element={<Navigate to="/app" replace />} />
         </Route>

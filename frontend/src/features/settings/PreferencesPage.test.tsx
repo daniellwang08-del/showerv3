@@ -98,6 +98,9 @@ function makeSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     match_quality_check: 'rescore',
     match_quality_check_min_score: 70,
     job_share_default: 'private',
+    job_share_locked: false,
+    team_space_name: null,
+    team_space_public_id: null,
     resume_filename_mode: 'pattern',
     resume_filename_value: '{firstname}_{lastname}_{kind}',
     resume_tailoring_prompt_mode: 'custom',
@@ -273,7 +276,7 @@ describe('PreferencesPage', () => {
     renderPage();
     expect(await screen.findByRole('radio', { name: /Keep them private/ })).toBeChecked();
     expect(screen.queryByRole('radio', { name: /Ask me each time/ })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('radio', { name: /Share with the team/ }));
+    await user.click(screen.getByRole('radio', { name: /Share with my team space/ }));
     await waitFor(() =>
       expect(api.saveJobShareDefaultSettings).toHaveBeenCalledWith({ job_share_default: 'team' }),
     );

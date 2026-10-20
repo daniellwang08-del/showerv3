@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Briefcase, Coins, LogOut, MessageSquare, Moon, Sparkles, SquarePen, Sun } from 'lucide-react';
+import { Briefcase, Coins, LogOut, MessageSquare, Moon, Sparkles, SquarePen, Sun, UsersRound } from 'lucide-react';
 import {
   CommandDialog,
   Command,
@@ -103,6 +103,13 @@ export function CommandPalette({
                 >
                   <Coins />
                   Plans and credits
+                </CommandItem>
+                <CommandItem
+                  value="team space members invite lead"
+                  onSelect={() => run(() => navigate('/app/team'))}
+                >
+                  <UsersRound />
+                  Team
                 </CommandItem>
               </>
             ) : null}

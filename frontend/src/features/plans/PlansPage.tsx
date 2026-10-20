@@ -13,8 +13,10 @@ import {
 import { HeroStat, PageLayout } from '@/components/app/PageLayout';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { CheckoutPreviewDialog } from './CheckoutPreviewDialog';
+import { MyPackages } from './MyPackages';
 import { PackageCard } from './PackageCard';
-import { type CreditPackage, PACKAGES, SIGNUP_CREDITS, formatRate, recommendPackage } from './plansModel';
+import { type CheckoutOffer, PACKAGES, SIGNUP_CREDITS, formatRate, recommendPackage } from './plansModel';
+import { TeamPlanCard } from './TeamPlanCard';
 import { UsageEstimator } from './UsageEstimator';
 
 const DEFAULT_PACE = 40;
@@ -76,6 +78,14 @@ const FAQ: { q: string; a: ReactNode }[] = [
     a: 'No. Credits stay on your account until you use them, and packages add up when you buy more than one.',
   },
   {
+    q: 'Can I give a package to someone else?',
+    a: 'Yes. Packages wait in your store until you use them. Give any of them to another person by email; if they have no account yet, it waits for them and you can take it back until they sign up.',
+  },
+  {
+    q: 'How does the TEAM package work?',
+    a: 'Each TEAM package opens one team space with its own ID, and is used up when you create the space. As the lead, you invite members by email, set and lock how their jobs are shared, and follow their job adds, applications, and interviews. Members keep using their own credits.',
+  },
+  {
     q: 'Is this a subscription?',
     a: 'No. Every package is a one-time payment. There is nothing to cancel, and you only buy again when you need more.',
   },
@@ -83,7 +93,7 @@ const FAQ: { q: string; a: ReactNode }[] = [
 
 export function PlansPage() {
   const [jobsPerWeek, setJobsPerWeek] = useState(DEFAULT_PACE);
-  const [buying, setBuying] = useState<CreditPackage | null>(null);
+  const [buying, setBuying] = useState<CheckoutOffer | null>(null);
   const suggested = recommendPackage(jobsPerWeek);
 
   const meta = (
@@ -110,6 +120,10 @@ export function PlansPage() {
       meta={meta}
     >
       <div className="space-y-10">
+        <Group title="Your packages" description="Your balance and the packages waiting in your store.">
+          <MyPackages />
+        </Group>
+
         <Group title="Credit packages" description="Bigger packages lower the price of every job.">
           <div className="grid grid-cols-1 gap-4 pt-1 sm:grid-cols-2 xl:grid-cols-4">
             {PACKAGES.map((pkg) => (
@@ -118,11 +132,15 @@ export function PlansPage() {
                 pkg={pkg}
                 jobsPerWeek={jobsPerWeek}
                 fitsPace={pkg.id === suggested.id}
-                onBuy={setBuying}
+                onBuy={(p) => setBuying({ kind: 'credits', pkg: p })}
               />
             ))}
           </div>
           <p className="px-1 text-xs text-muted-foreground">Prices in USD. Taxes may apply at checkout.</p>
+        </Group>
+
+        <Group title="TEAM" description="Run a group search: one package opens one team space you lead.">
+          <TeamPlanCard onBuy={() => setBuying({ kind: 'team' })} />
         </Group>
 
         <UsageEstimator jobsPerWeek={jobsPerWeek} onChange={setJobsPerWeek} />
@@ -173,7 +191,7 @@ export function PlansPage() {
         </Group>
       </div>
 
-      <CheckoutPreviewDialog pkg={buying} onClose={() => setBuying(null)} />
+      <CheckoutPreviewDialog offer={buying} onClose={() => setBuying(null)} />
     </PageLayout>
   );
 }

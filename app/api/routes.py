@@ -575,6 +575,7 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             created_at=user.created_at,
             approval_status=user.approval_status,
             approved_at=user.approved_at,
+            credit_balance=int(getattr(user, "credit_balance", 0) or 0),
         )
 
 
@@ -5136,6 +5137,9 @@ class UserSettingsResponse(BaseModel):
     match_quality_check_min_score: int = 70
     manual_submit_pipeline: str = "full"
     job_share_default: str = "private"
+    job_share_locked: bool = False
+    team_space_name: str | None = None
+    team_space_public_id: str | None = None
     resume_filename_mode: str = "pattern"
     resume_filename_value: str = "{firstname}_{lastname}_{kind}"
     resume_tailoring_prompt_mode: str

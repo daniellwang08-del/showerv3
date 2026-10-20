@@ -20,8 +20,8 @@ export const JOB_SHARE_DEFAULT_OPTIONS: {
   },
   {
     value: 'team',
-    label: 'Share with the team',
-    hint: 'Other applicants on this workspace can see them right away.',
+    label: 'Share with my team space',
+    hint: 'Your team lead and teammates can see them right away. Without a team space this stays private.',
   },
   {
     value: 'all',
@@ -51,7 +51,7 @@ export function addNoticeDescription(batch: JobAddBatch): string {
   const them = batch.job_count === 1 ? 'it' : 'them';
   switch (batch.share_scope) {
     case 'team':
-      return `Shared with the team. Teammates can see ${them} in their jobs list.`;
+      return `Shared with your team space. Teammates can see ${them} in their jobs list.`;
     case 'all':
       return `Shared with everyone. Every approved account can see ${them}.`;
     case 'users':
@@ -81,7 +81,7 @@ export function jobVisibility(
         hint: fromMe ? 'Hidden from everyone else.' : 'Only the person who added it can see it.',
       };
     case 'team':
-      return { scope: 'team', label: 'Team', hint: 'Visible to every applicant on this workspace.' };
+      return { scope: 'team', label: 'Team', hint: 'Visible to the team space of the person who added it.' };
     case 'users':
       return {
         scope: 'users',
