@@ -129,6 +129,18 @@ export function roundType(event: Pick<InterviewEvent, 'kind' | 'title' | 'summar
   return 'other';
 }
 
+const OPEN_REQUEST = new Set<InterviewEventStatus>(['needs_scheduling', 'action_required']);
+
+/** A request (pick a time, do an assessment, ...) the user has not dismissed. */
+export function needsUser(event: Pick<InterviewEvent, 'status' | 'ignored'>): boolean {
+  return OPEN_REQUEST.has(event.status) && !event.ignored;
+}
+
+/** Open requests on a process that the user has not dismissed. */
+export function openRequests(process: Pick<InterviewProcess, 'events'>): InterviewEvent[] {
+  return process.events.filter(needsUser);
+}
+
 export type ProcessStep = {
   key: string;
   type: RoundType;
@@ -142,6 +154,10 @@ export type ProcessStep = {
   rescheduled: boolean;
   /** The newest email about this step. */
   event: InterviewEvent;
+  /** Every event folded into this step. */
+  eventIds: string[];
+  /** The user dismissed it, so it asks for nothing. */
+  ignored: boolean;
 };
 
 const NOT_A_STEP = new Set<InterviewEventKind>(['application_received', 'rejection', 'offer']);
@@ -163,6 +179,7 @@ export function processSteps(process: Pick<InterviewProcess, 'events'>): Process
   const groups = new Map<string, InterviewEvent[]>();
   for (const event of process.events) {
     if (NOT_A_STEP.has(event.kind) || event.status === 'info') continue;
+    if (event.ignored && OPEN_REQUEST.has(event.status) && !event.scheduled_at) continue;
     const type = roundType(event);
     const at = time(event.scheduled_at);
     const key = at !== null ? `${type}@${at}` : `${type}#${normTitle(eventTitle(event))}`;
@@ -185,6 +202,8 @@ export function processSteps(process: Pick<InterviewProcess, 'events'>): Process
       status,
       rescheduled: false,
       event: latest,
+      eventIds: sorted.map((e) => e.id),
+      ignored: sorted.every((e) => e.ignored),
     };
   });
 
@@ -225,7 +244,7 @@ export function plannedSteps(
 export function upcomingStep(steps: ProcessStep[], now = Date.now()): ProcessStep | null {
   const booked = steps.find((s) => s.status === 'scheduled' && s.at && Date.parse(s.at) >= now);
   if (booked) return booked;
-  return steps.find((s) => s.status === 'needs_scheduling' || s.status === 'action_required') ?? null;
+  return steps.find((s) => !s.ignored && OPEN_REQUEST.has(s.status)) ?? null;
 }
 
 export type InterviewLane = { process: InterviewProcess; steps: ProcessStep[]; next: ProcessStep | null };
@@ -280,7 +299,7 @@ export function awaitingOutcome(processes: InterviewProcess[], now = new Date())
   for (const process of processes) {
     if (process.status !== 'active') continue;
     for (const event of process.events) {
-      if (event.status === 'scheduled' && event.scheduled_at && new Date(event.scheduled_at) < now) {
+      if (event.status === 'scheduled' && !event.ignored && event.scheduled_at && new Date(event.scheduled_at) < now) {
         items.push({ event, process });
       }
     }
@@ -293,7 +312,7 @@ export function actionItems(processes: InterviewProcess[]): UpcomingItem[] {
   for (const process of processes) {
     if (process.status !== 'active') continue;
     for (const event of process.events) {
-      if (event.status === 'needs_scheduling' || event.status === 'action_required') items.push({ event, process });
+      if (needsUser(event)) items.push({ event, process });
     }
   }
   return items.sort((a, b) => Date.parse(b.event.email_date ?? '') - Date.parse(a.event.email_date ?? ''));

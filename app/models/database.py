@@ -1013,6 +1013,8 @@ class InterviewEvent(Base):
     email_subject = Column(String(500), nullable=True)
     email_from = Column(String(500), nullable=True)
     email_date = Column(DateTime, nullable=True)
+    # Set by the user; sync never clears it, so an ignored request stays out of "needs your action".
+    ignored_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

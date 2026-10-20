@@ -63,6 +63,7 @@ import {
   upcomingInterviews,
 } from './interviewsModel';
 import { INTERVIEWS_KEY, MAIL_APPLICATIONS_KEY } from './queries';
+import { useIgnoreEvents } from './useIgnoreEvents';
 
 export function InterviewsPage() {
   const qc = useQueryClient();
@@ -352,6 +353,7 @@ function PipelineView({
   onAdd: () => void;
 }) {
   const { processes, connection } = data;
+  const ignore = useIgnoreEvents();
   const upcoming = upcomingInterviews(processes);
   const actions = actionItems(processes);
   const outcome = awaitingOutcome(processes);
@@ -418,10 +420,18 @@ function PipelineView({
                   hint={item.event.status === 'needs_scheduling' ? 'Pick a time' : 'Action required'}
                   now={now}
                   onOpen={onOpen}
+                  onIgnore={ignore}
                 />
               ))}
               {outcome.slice(0, 4).map((item) => (
-                <ActionRow key={item.event.id} item={item} hint="Log the outcome" now={now} onOpen={onOpen} />
+                <ActionRow
+                  key={item.event.id}
+                  item={item}
+                  hint="Log the outcome"
+                  now={now}
+                  onOpen={onOpen}
+                  onIgnore={ignore}
+                />
               ))}
             </ul>
           ) : (
@@ -434,7 +444,7 @@ function PipelineView({
 
       <section aria-label="Pipeline" className="space-y-3">
         <h2 className="text-sm font-semibold">Pipeline</h2>
-        <InterviewBoard processes={processes} onOpen={onOpen} now={now} />
+        <InterviewBoard processes={processes} onOpen={onOpen} onIgnore={ignore} now={now} />
       </section>
     </div>
   );

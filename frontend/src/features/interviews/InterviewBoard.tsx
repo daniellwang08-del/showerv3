@@ -6,6 +6,7 @@ import {
   ChevronDown,
   CircleDashed,
   ExternalLink,
+  EyeOff,
   Mail,
   PanelRightOpen,
   PenLine,
@@ -20,6 +21,7 @@ import {
   dayLabel,
   eventTitle,
   interviewLanes,
+  openRequests,
   PIPELINE_STAGES,
   plannedSteps,
   relativeAgo,
@@ -137,9 +139,46 @@ export function DetailsButton({ label, onClick, className }: { label: string; on
   );
 }
 
-function ProcessCard({ process, onOpen }: { process: InterviewProcess; onOpen: () => void }) {
+/** Dismisses events from "needs your action". Absent on read-only views. */
+export type IgnoreHandler = (eventIds: string[], label: string) => void;
+
+export function IgnoreButton({
+  label,
+  onClick,
+  className,
+}: {
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Ignore ${label}`}
+      title="Ignore: no action needed"
+      className={cn(
+        'inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50',
+        className,
+      )}
+    >
+      <EyeOff className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+function ProcessCard({
+  process,
+  onOpen,
+  onIgnore,
+}: {
+  process: InterviewProcess;
+  onOpen: () => void;
+  onIgnore?: IgnoreHandler;
+}) {
   const next = process.next_event;
   const label = processLabel(process);
+  const canIgnore = !!onIgnore && process.needs_action;
   return (
     <div className="group relative transition-transform hover:-translate-y-0.5">
       <OpenEmailTarget
@@ -169,7 +208,7 @@ function ProcessCard({ process, onOpen }: { process: InterviewProcess; onOpen: (
         ) : process.next_step ? (
           <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground">{process.next_step}</p>
         ) : null}
-        <p className="mt-2 flex items-center gap-1 pr-8 text-[11px] text-muted-foreground/80">
+        <p className={cn('mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/80', canIgnore ? 'pr-16' : 'pr-8')}>
           {process.source === 'manual' ? <PenLine className="size-3" aria-hidden /> : <Mail className="size-3" aria-hidden />}
           {relativeAgo(process.last_activity_at) ?? 'No activity yet'}
           {process.email_url ? (
@@ -177,6 +216,13 @@ function ProcessCard({ process, onOpen }: { process: InterviewProcess; onOpen: (
           ) : null}
         </p>
       </OpenEmailTarget>
+      {onIgnore && canIgnore ? (
+        <IgnoreButton
+          label={`${label} action`}
+          onClick={() => onIgnore(openRequests(process).map((e) => e.id), process.company)}
+          className="absolute right-9 bottom-1.5"
+        />
+      ) : null}
       <DetailsButton label={label} onClick={onOpen} className="absolute right-1.5 bottom-1.5" />
     </div>
   );
@@ -191,8 +237,18 @@ const STEP_STATUS: Record<InterviewEventStatus, { label: string; tone: string }>
   info: { label: 'Update', tone: 'text-muted-foreground' },
 };
 
+/** The step asks the user for something: an open request, or a past round with no outcome. */
+function stepWantsUser(step: ProcessStep, now: number): boolean {
+  if (step.ignored || step.rescheduled) return false;
+  if (step.status === 'needs_scheduling' || step.status === 'action_required') return true;
+  return step.status === 'scheduled' && !!step.at && Date.parse(step.at) < now;
+}
+
 function stepStatus(step: ProcessStep, now: number): { label: string; tone: string; Icon: typeof Check } {
   if (step.rescheduled) return { label: 'Rescheduled', tone: 'text-muted-foreground', Icon: Repeat };
+  if (step.ignored && step.status !== 'completed' && step.status !== 'cancelled') {
+    return { label: 'Ignored', tone: 'text-muted-foreground', Icon: EyeOff };
+  }
   if (step.status === 'scheduled' && step.at && Date.parse(step.at) < now) {
     return { label: 'Log outcome', tone: 'text-amber-600 dark:text-amber-400', Icon: CircleDashed };
   }
@@ -207,6 +263,7 @@ function StepCard({
   isNext,
   now,
   onOpen,
+  onIgnore,
 }: {
   step: ProcessStep;
   index: number;
@@ -214,10 +271,12 @@ function StepCard({
   isNext: boolean;
   now: number;
   onOpen: () => void;
+  onIgnore?: IgnoreHandler;
 }) {
   const round = ROUND_META[step.type];
   const status = stepStatus(step, now);
-  const muted = step.status === 'cancelled';
+  const muted = step.status === 'cancelled' || step.ignored;
+  const canIgnore = !!onIgnore && stepWantsUser(step, now);
   const when = step.at
     ? `${dayLabel(step.at, new Date(now))} · ${timeLabel(step.at)}`
     : step.date
@@ -235,12 +294,19 @@ function StepCard({
           muted && 'opacity-60',
         )}
       >
-        <span className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+        <span
+          className={cn(
+            'flex items-center gap-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase',
+            canIgnore && 'pr-5',
+          )}
+        >
           <span className="tabular-nums">Step {index + 1}</span>
           <span aria-hidden className={cn('size-1.5 rounded-full', round.dot)} />
           <span className="truncate">{round.label}</span>
         </span>
-        <span className={cn('mt-1 line-clamp-2 text-xs leading-snug font-medium', muted && 'line-through')}>{step.title}</span>
+        <span className={cn('mt-1 line-clamp-2 text-xs leading-snug font-medium', step.status === 'cancelled' && 'line-through')}>
+          {step.title}
+        </span>
         <span className="mt-auto flex items-center justify-between gap-1 pt-1.5 text-[11px]">
           <span className="truncate text-muted-foreground tabular-nums" title={step.at ? dateTimeLabel(step.at) : undefined}>
             {when}
@@ -251,6 +317,13 @@ function StepCard({
           </span>
         </span>
       </OpenEmailTarget>
+      {onIgnore && canIgnore ? (
+        <IgnoreButton
+          label={`step ${index + 1}, ${step.title}`}
+          onClick={() => onIgnore(step.eventIds, `${process.company}, ${step.title}`)}
+          className="absolute top-0.5 right-0.5 size-6"
+        />
+      ) : null}
     </li>
   );
 }
@@ -270,7 +343,17 @@ function PlannedStepCard({ title, type, index }: { title: string; type: RoundTyp
   );
 }
 
-function InterviewLaneRow({ lane, now, onOpen }: { lane: InterviewLane; now: number; onOpen: () => void }) {
+function InterviewLaneRow({
+  lane,
+  now,
+  onOpen,
+  onIgnore,
+}: {
+  lane: InterviewLane;
+  now: number;
+  onOpen: () => void;
+  onIgnore?: IgnoreHandler;
+}) {
   const { process, steps, next } = lane;
   const planned = plannedSteps(process, steps);
   const label = processLabel(process);
@@ -294,6 +377,12 @@ function InterviewLaneRow({ lane, now, onOpen }: { lane: InterviewLane; now: num
             {steps.length ? `${done} of ${steps.length + planned.length} done` : 'No rounds yet'}
           </span>
         </OpenEmailTarget>
+        {onIgnore && process.needs_action ? (
+          <IgnoreButton
+            label={`${label} action`}
+            onClick={() => onIgnore(openRequests(process).map((e) => e.id), process.company)}
+          />
+        ) : null}
         <DetailsButton label={label} onClick={onOpen} />
       </div>
       {steps.length || planned.length ? (
@@ -310,6 +399,7 @@ function InterviewLaneRow({ lane, now, onOpen }: { lane: InterviewLane; now: num
               isNext={next?.key === step.key}
               now={now}
               onOpen={onOpen}
+              onIgnore={onIgnore}
             />
           ))}
           {planned.map((p, i) => (
@@ -327,11 +417,13 @@ function InterviewingColumn({
   processes,
   now,
   onOpen,
+  onIgnore,
   className,
 }: {
   processes: InterviewProcess[];
   now: number;
   onOpen: (id: string) => void;
+  onIgnore?: IgnoreHandler;
   className?: string;
 }) {
   const groups = interviewLanes(processes, now);
@@ -373,7 +465,13 @@ function InterviewingColumn({
                 <span className="font-normal tabular-nums">· {group.lanes.length}</span>
               </h3>
               {group.lanes.map((lane) => (
-                <InterviewLaneRow key={lane.process.id} lane={lane} now={now} onOpen={() => onOpen(lane.process.id)} />
+                <InterviewLaneRow
+                  key={lane.process.id}
+                  lane={lane}
+                  now={now}
+                  onOpen={() => onOpen(lane.process.id)}
+                  onIgnore={onIgnore}
+                />
               ))}
             </section>
           ))}
@@ -388,10 +486,12 @@ function InterviewingColumn({
 export function InterviewBoard({
   processes,
   onOpen,
+  onIgnore,
   now = Date.now(),
 }: {
   processes: InterviewProcess[];
   onOpen: (id: string) => void;
+  onIgnore?: IgnoreHandler;
   now?: number;
 }) {
   const { columns, closed } = buildBoard(processes, now);
@@ -408,6 +508,7 @@ export function InterviewBoard({
                 processes={col.processes}
                 now={now}
                 onOpen={onOpen}
+                onIgnore={onIgnore}
                 className="order-last sm:col-span-2 lg:col-span-4 2xl:order-none 2xl:col-span-1"
               />
             );
@@ -430,7 +531,9 @@ export function InterviewBoard({
               </header>
               <div className="flex flex-col gap-2">
                 {col.processes.length ? (
-                  col.processes.map((p) => <ProcessCard key={p.id} process={p} onOpen={() => onOpen(p.id)} />)
+                  col.processes.map((p) => (
+                    <ProcessCard key={p.id} process={p} onOpen={() => onOpen(p.id)} onIgnore={onIgnore} />
+                  ))
                 ) : (
                   <p className="rounded-xl border border-dashed px-2 py-6 text-center text-[11px] text-muted-foreground">
                     Nothing here

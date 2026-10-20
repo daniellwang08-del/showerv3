@@ -48,6 +48,8 @@ export interface InterviewEvent {
   /** Opens this message in the user's own mailbox; null for manual steps or unsupported providers. */
   email_url: string | null;
   source: 'email' | 'manual';
+  /** The user dismissed it: it no longer counts as needing their action. */
+  ignored?: boolean;
 }
 
 export interface InterviewProcess {

@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Check,
   ExternalLink,
+  Eye,
+  EyeOff,
   Link2,
   Loader2,
   Mail,
@@ -315,9 +317,11 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
 
 function TimelineItem({ event, readOnly }: { event: InterviewEvent; readOnly: boolean }) {
   const update = useInterviewMutation((status: InterviewEvent['status']) => updateInterviewEvent(event.id, { status }));
+  const setIgnored = useInterviewMutation((ignored: boolean) => updateInterviewEvent(event.id, { ignored }));
   const remove = useInterviewMutation(() => deleteInterviewEvent(event.id));
   const meta = EVENT_STATUS_META[event.status];
   const open = event.status === 'scheduled' || event.status === 'needs_scheduling' || event.status === 'action_required';
+  const askable = event.status === 'needs_scheduling' || event.status === 'action_required';
   const when = event.scheduled_at ?? event.email_date;
 
   return (
@@ -332,6 +336,12 @@ function TimelineItem({ event, readOnly }: { event: InterviewEvent; readOnly: bo
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm font-medium">{eventTitle(event)}</p>
         <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', meta.tone)}>{meta.label}</span>
+        {event.ignored ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <EyeOff className="size-3" aria-hidden />
+            Ignored
+          </span>
+        ) : null}
       </div>
       {when ? (
         <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
@@ -390,6 +400,17 @@ function TimelineItem({ event, readOnly }: { event: InterviewEvent; readOnly: bo
           <Button size="xs" variant="ghost" onClick={() => update.mutate('cancelled')} disabled={update.isPending}>
             <X />
             Cancelled
+          </Button>
+        ) : null}
+        {event.ignored ? (
+          <Button size="xs" variant="ghost" onClick={() => setIgnored.mutate(false)} disabled={setIgnored.isPending}>
+            <Eye />
+            Stop ignoring
+          </Button>
+        ) : askable ? (
+          <Button size="xs" variant="ghost" onClick={() => setIgnored.mutate(true)} disabled={setIgnored.isPending}>
+            <EyeOff />
+            Ignore
           </Button>
         ) : null}
         <Button

@@ -468,7 +468,15 @@ def event_public(e: InterviewEvent, conn: MailConnection | None = None) -> dict[
         "email_date": _iso(e.email_date),
         "email_url": mail_applications.email_url(conn, e.message_id, e.thread_id),
         "source": "email" if e.message_id else "manual",
+        "ignored": e.ignored_at is not None,
     }
+
+
+OPEN_REQUEST = ("needs_scheduling", "action_required")
+
+
+def needs_user(e: InterviewEvent) -> bool:
+    return e.status in OPEN_REQUEST and e.ignored_at is None
 
 
 def primary_email_event(events: list[InterviewEvent], upcoming: list[InterviewEvent]) -> InterviewEvent | None:
@@ -479,7 +487,7 @@ def primary_email_event(events: list[InterviewEvent], upcoming: list[InterviewEv
     for e in upcoming:
         if e.message_id:
             return e
-    pending = [e for e in from_mail if e.status in ("needs_scheduling", "action_required")]
+    pending = [e for e in from_mail if needs_user(e)]
     pool = pending or from_mail
     return max(pool, key=lambda e: e.email_date or e.created_at or datetime.min)
 
@@ -510,8 +518,7 @@ def process_public(
         "events": [event_public(e, conn) for e in ordered],
         "next_event": event_public(upcoming[0], conn) if upcoming else None,
         "email_url": mail_applications.email_url(conn, primary.message_id, primary.thread_id) if primary else None,
-        "needs_action": p.status == "active"
-        and any(e.status in ("needs_scheduling", "action_required") for e in events),
+        "needs_action": p.status == "active" and any(needs_user(e) for e in events),
     }
 
 
@@ -660,6 +667,8 @@ async def update_event(session: AsyncSession, user_id: str, event_id: str, chang
     for field in ("status", "title", "scheduled_at", "duration_minutes", "meeting_url", "location", "kind"):
         if field in changes:
             setattr(row, field, changes[field])
+    if changes.get("ignored") is not None:
+        row.ignored_at = (row.ignored_at or _utcnow()) if changes["ignored"] else None
     await session.commit()
 
 

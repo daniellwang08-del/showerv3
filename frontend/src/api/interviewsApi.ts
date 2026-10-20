@@ -59,7 +59,7 @@ export async function addInterviewEvent(processId: string, body: EventInput): Pr
 
 export async function updateInterviewEvent(
   eventId: string,
-  changes: Partial<EventInput> & { status?: InterviewEventStatus },
+  changes: Partial<EventInput> & { status?: InterviewEventStatus; ignored?: boolean },
 ): Promise<void> {
   await apiClient.patch(`/interviews/events/${encodeURIComponent(eventId)}`, changes);
 }

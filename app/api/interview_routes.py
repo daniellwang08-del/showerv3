@@ -82,6 +82,7 @@ class EventUpdate(BaseModel):
     duration_minutes: int | None = Field(default=None, ge=5, le=600)
     meeting_url: str | None = Field(default=None, max_length=1000)
     location: str | None = Field(default=None, max_length=500)
+    ignored: bool | None = None
 
     @field_validator("scheduled_at")
     @classmethod

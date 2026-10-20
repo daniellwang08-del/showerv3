@@ -189,6 +189,7 @@ describe('InterviewsPage', () => {
       'Step 2, System design, Hooli',
       'Step 3, Values interview, Hooli',
       'Step 4, Book your onsite loop, Hooli',
+      'Ignore step 4, Book your onsite loop',
     ]);
     expect(steps).toHaveTextContent('Culture interview with the team');
     expect(steps).toHaveTextContent('Coming up');
@@ -278,6 +279,30 @@ describe('InterviewsPage', () => {
 
     await user.click(within(board).getByRole('button', { name: 'Details for Acme, Engineer' }));
     expect(await screen.findByLabelText('Stage')).toBeInTheDocument();
+  });
+
+  it('ignores an action from the list and from its pipeline card', async () => {
+    mocked.fetchInterviews.mockResolvedValue(pipeline);
+    const user = userEvent.setup();
+    renderPage();
+
+    const actions = await screen.findByRole('region', { name: 'Needs your action' });
+    const board = screen.getByRole('region', { name: 'Pipeline' });
+    expect(within(board).getByRole('button', { name: 'Ignore Globex, Engineer action' })).toBeInTheDocument();
+
+    mocked.fetchInterviews.mockResolvedValue({
+      ...pipeline,
+      processes: pipeline.processes.map((p) =>
+        p.id === 'p2' ? { ...p, needs_action: false, events: p.events.map((e) => ({ ...e, ignored: true })) } : p,
+      ),
+      summary: { ...pipeline.summary, needs_action: 0 },
+    });
+    await user.click(within(actions).getByRole('button', { name: 'Ignore Globex, Book recruiter call' }));
+
+    await waitFor(() => expect(mocked.updateInterviewEvent).toHaveBeenCalledWith('e2', { ignored: true }));
+    await waitFor(() => expect(actions).toHaveTextContent('You are all caught up'));
+    expect(within(board).queryByRole('button', { name: /^Ignore Globex/ })).not.toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith('Ignored: Globex, Book recruiter call', expect.anything());
   });
 
   it('adds a process manually', async () => {

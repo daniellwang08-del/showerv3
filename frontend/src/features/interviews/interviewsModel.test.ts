@@ -9,6 +9,7 @@ import {
   eventsByDate,
   interviewLanes,
   mailErrorMessage,
+  openRequests,
   plannedSteps,
   processSteps,
   relativeAgo,
@@ -150,6 +151,24 @@ describe('interviewsModel', () => {
       }),
     ];
     expect(actionItems(processes).map((i) => i.event.id)).toEqual(['b', 'a']);
+  });
+
+  it('leaves ignored events out of the action lists and the pipeline steps', () => {
+    const process = makeProcess({
+      events: [
+        makeEvent({ id: 'ask', kind: 'assessment', status: 'action_required', title: 'Take-home', ignored: true }),
+        makeEvent({ id: 'pick', kind: 'scheduling', status: 'needs_scheduling', title: 'Pick a time: system design' }),
+        makeEvent({ id: 'past', title: 'Coding round', scheduled_at: '2026-10-15T12:00:00Z', ignored: true }),
+      ],
+    });
+    expect(actionItems([process]).map((i) => i.event.id)).toEqual(['pick']);
+    expect(awaitingOutcome([process], NOW)).toEqual([]);
+    const steps = processSteps(process);
+    expect(steps.map((s) => [s.event.id, s.ignored])).toEqual([
+      ['past', true],
+      ['pick', false],
+    ]);
+    expect(openRequests(process).map((e) => e.id)).toEqual(['pick']);
   });
 
   it('labels days and stage positions', () => {

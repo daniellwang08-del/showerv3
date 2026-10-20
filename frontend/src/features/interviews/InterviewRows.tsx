@@ -1,5 +1,5 @@
 import { Clock, MapPin, Video } from 'lucide-react';
-import { CompanyAvatar, DetailsButton, OpenEmailTarget, StageChip } from './InterviewBoard';
+import { CompanyAvatar, DetailsButton, IgnoreButton, OpenEmailTarget, StageChip, type IgnoreHandler } from './InterviewBoard';
 import { dateTimeLabel, dayLabel, eventTitle, relativeAgo, timeLabel, type UpcomingItem } from './interviewsModel';
 
 export function UpcomingRow({ item, onOpen }: { item: UpcomingItem; onOpen: (id: string) => void }) {
@@ -45,11 +45,13 @@ export function ActionRow({
   hint,
   now,
   onOpen,
+  onIgnore,
 }: {
   item: UpcomingItem;
   hint: string;
   now: number;
   onOpen: (id: string) => void;
+  onIgnore?: IgnoreHandler;
 }) {
   const { event, process } = item;
   const ago = relativeAgo(event.email_date, now);
@@ -84,6 +86,7 @@ export function ActionRow({
           ) : null}
         </span>
       </OpenEmailTarget>
+      {onIgnore ? <IgnoreButton label={label} onClick={() => onIgnore([event.id], label)} /> : null}
       <DetailsButton label={label} onClick={() => onOpen(process.id)} />
     </li>
   );

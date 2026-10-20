@@ -220,3 +220,51 @@ def test_summarize_counts():
         {"status": "closed", "stage": "rejected", "needs_action": False, "events": []},
     ]
     assert svc.summarize(processes) == {"active": 2, "upcoming_week": 1, "needs_action": 1, "offers": 1, "closed": 1}
+
+
+def _event(**kw):
+    from app.models.database import InterviewEvent
+
+    base = dict(id="e1", process_id="p1", user_id="u1", kind="assessment", status="action_required",
+                message_id="m1", email_date=datetime(2026, 10, 6, 12, 0))
+    return InterviewEvent(**{**base, **kw})
+
+
+def _process():
+    from app.models.database import InterviewProcess
+
+    return InterviewProcess(id="p1", user_id="u1", company="Acme", company_key="acme", stage="assessment", status="active")
+
+
+def test_ignored_request_does_not_need_action():
+    open_req = _event()
+    assert svc.process_public(_process(), [open_req], None)["needs_action"] is True
+
+    ignored = _event(ignored_at=datetime(2026, 10, 7))
+    payload = svc.process_public(_process(), [ignored], None)
+    assert payload["needs_action"] is False
+    assert payload["events"][0]["ignored"] is True
+
+
+class _GetSession:
+    def __init__(self, row):
+        self.row = row
+        self.commits = 0
+
+    async def get(self, _model, _id):
+        return self.row
+
+    async def commit(self):
+        self.commits += 1
+
+
+def test_update_event_toggles_ignored():
+    row = _event()
+    session = _GetSession(row)
+    asyncio.run(svc.update_event(session, "u1", "e1", {"ignored": True}))
+    first = row.ignored_at
+    assert first is not None and row.status == "action_required"
+    asyncio.run(svc.update_event(session, "u1", "e1", {"ignored": True}))
+    assert row.ignored_at == first
+    asyncio.run(svc.update_event(session, "u1", "e1", {"ignored": False}))
+    assert row.ignored_at is None
