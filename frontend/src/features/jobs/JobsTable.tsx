@@ -461,6 +461,7 @@ function Cell({
         <JobLocationLabel
           location={job.location}
           countries={job.location_countries}
+          inferred={job.location_country_inferred}
           className="w-full text-xs text-muted-foreground"
         />
       );

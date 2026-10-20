@@ -13,6 +13,22 @@ describe('JobLocationLabel', () => {
     expect(getByText('Canada; Toronto, Canada; United States')).toBeInTheDocument();
   });
 
+  it('shows US with its flag when a job lists no place', () => {
+    const { container, getByText } = render(<JobLocationLabel location={null} countries={['US']} inferred />);
+    expect(getByText('US')).toBeInTheDocument();
+    expect(container.querySelector('.country-flag')?.textContent).toBe('\u{1F1FA}\u{1F1F8}');
+  });
+
+  it('appends the inferred country to a work-mode-only location', () => {
+    const { getByText } = render(<JobLocationLabel location="Remote" countries={['US']} inferred />);
+    expect(getByText('Remote, US')).toBeInTheDocument();
+  });
+
+  it('shows a dash when nothing is known', () => {
+    const { getByText } = render(<JobLocationLabel location={null} countries={[]} />);
+    expect(getByText('-')).toBeInTheDocument();
+  });
+
   it('shows no flag span when no country is known', () => {
     const { container } = render(<JobLocationLabel location="Multiple Locations" />);
     expect(container.querySelector('.country-flag')).toBeNull();

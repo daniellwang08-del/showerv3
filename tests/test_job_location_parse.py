@@ -1,7 +1,7 @@
 import pytest
 
 from app.models.database import Job, JobExtraction
-from app.services.job_location_classifier import detect_countries_in_text
+from app.services.job_location_classifier import detect_countries_in_text, display_location_countries
 from app.services.job_location_parse import (
     infer_location_from_text,
     location_specificity,
@@ -80,6 +80,29 @@ def test_region_overrides_city_default():
     assert detect_countries_in_text("Paris") == ["FR"]
     assert detect_countries_in_text("Berlin, DE") == ["DE"]
     assert infer_location_from_text("This role is based in Dublin, Ireland. Apply today.") == "Dublin, Ireland"
+
+
+@pytest.mark.parametrize("location", [None, "", "  ", "Remote", "remote", "Hybrid", "Remote (Hybrid)", "Remote - Fully", "N/A"])
+def test_jobs_without_a_place_read_as_us(location):
+    assert display_location_countries(location) == (["US"], True)
+
+
+def test_named_places_are_never_inferred():
+    assert display_location_countries("Berlin, Germany") == (["DE"], False)
+    assert display_location_countries("Remote, United States") == (["US"], False)
+    assert display_location_countries("Springfield") == ([], False)
+
+
+@pytest.mark.parametrize("location", ["Worldwide", "Remote Anywhere", "Global"])
+def test_worldwide_jobs_get_no_country(location):
+    assert display_location_countries(location) == ([], False)
+
+
+def test_remote_policy_can_point_elsewhere():
+    assert display_location_countries("Remote", "Remote within Canada only") == (["CA"], True)
+    assert display_location_countries(None, "Open to candidates in EMEA") == ([], False)
+    assert display_location_countries("Remote", "Work from anywhere in the world") == ([], False)
+    assert display_location_countries("Remote", "Flexible hours, async team") == (["US"], True)
 
 
 def test_prefer_keeps_specific_over_remote():

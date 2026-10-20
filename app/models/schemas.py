@@ -226,6 +226,8 @@ class DashboardJobResponse(BaseModel):
     location: str | None
     # ISO 3166-1 alpha-2 codes resolved from ``location`` for flags / filters.
     location_countries: list[str] = []
+    # True when ``location`` names no place and the countries were inferred.
+    location_country_inferred: bool = False
     description: str | None = None
     posted_date: datetime | None
     experience_level: str | None

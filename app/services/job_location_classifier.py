@@ -403,6 +403,50 @@ def detect_countries_in_text(text: str | None) -> list[str]:
     return sorted(codes)
 
 
+_NO_PLACE_WORDS_RE = re.compile(
+    r"\b(?:remote|hybrid|on-?site|in[- ]office|office|work from home|wfh|fully|"
+    r"100%|unknown|n/a|not specified|tbd|flexible|various|multiple locations)(?!\w)"
+)
+
+
+def _names_no_place(normalized: str) -> bool:
+    """True for blank or work-mode-only text such as "Remote" or "Remote (Hybrid)"."""
+    leftover = _NO_PLACE_WORDS_RE.sub(" ", normalized)
+    return not re.sub(r"[\s\-,()/|.:]+", "", leftover)
+
+
+def display_location_countries(
+    location: str | None,
+    remote_policy: str | None = None,
+) -> tuple[list[str], bool]:
+    """Country codes for the Location column, and whether they were inferred.
+
+    US remote postings usually leave the place out, so a job whose location is
+    blank or only a work mode reads as US. The remote policy can still point
+    elsewhere ("Remote within Canada", "EMEA only"), and worldwide postings get
+    no country.
+    """
+    codes = detect_countries_in_text(location)
+    if codes:
+        return codes, False
+    normalized = _normalize(location)
+    if not _names_no_place(normalized) or _is_worldwide(normalized):
+        return [], False
+    policy = _normalize(remote_policy)
+    if policy:
+        policy_codes: set[str] = set()
+        for seg in _split_into_segments(policy):
+            policy_codes |= _detect_country_codes(seg)
+        if policy_codes:
+            return sorted(policy_codes), True
+        groups = _detect_region_groups(policy)
+        if groups and not any("US" in group for group in groups):
+            return [], False
+        if _is_worldwide(policy):
+            return [], False
+    return ["US"], True
+
+
 # ---- Legacy US-only API (wrappers over the generalized classifier) ----
 
 _LEGACY_US_SET = frozenset({"US"})
