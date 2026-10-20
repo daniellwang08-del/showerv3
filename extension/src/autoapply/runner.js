@@ -347,7 +347,8 @@ async function run(cfg) {
   const via = await submitAndConfirm(tab, job);
   step("Marking applied…");
   await api.markApplied([jobId]);
-  api.updateSession(jobId, "completed").catch(() => {});
+  // Awaited: the console removes this frame as soon as the run finishes.
+  await api.updateSession(jobId, "completed").catch(() => {});
   return { status: "applied", message: `Submitted and confirmed (${via}).` };
 }
 
