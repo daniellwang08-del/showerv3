@@ -923,6 +923,8 @@ class MailConnection(Base):
     # Newest message timestamp already scanned; next sync reads after it.
     sync_cursor = Column(DateTime, nullable=True)
     last_sync_stats = Column(JSON, nullable=True)
+    # Calendar event id -> version already read, so unrelated or deleted events stay out until they change.
+    calendar_seen = Column(JSON, nullable=True)
     connected_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

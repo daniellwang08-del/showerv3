@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react';
 import {
   AlertCircle,
   CalendarClock,
+  CalendarDays,
   Check,
   ChevronDown,
   CircleDashed,
@@ -209,7 +210,13 @@ function ProcessCard({
           <p className="mt-2.5 line-clamp-2 text-xs text-muted-foreground">{process.next_step}</p>
         ) : null}
         <p className={cn('mt-2 flex items-center gap-1 text-[11px] text-muted-foreground/80', canIgnore ? 'pr-16' : 'pr-8')}>
-          {process.source === 'manual' ? <PenLine className="size-3" aria-hidden /> : <Mail className="size-3" aria-hidden />}
+          {process.source === 'manual' ? (
+            <PenLine className="size-3" aria-hidden />
+          ) : process.source === 'calendar' ? (
+            <CalendarDays className="size-3" aria-hidden />
+          ) : (
+            <Mail className="size-3" aria-hidden />
+          )}
           {relativeAgo(process.last_activity_at) ?? 'No activity yet'}
           {process.email_url ? (
             <ExternalLink className="ml-auto size-3 opacity-0 transition-opacity group-hover:opacity-100" aria-hidden />

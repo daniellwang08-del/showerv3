@@ -45,9 +45,10 @@ export interface InterviewEvent {
   email_subject: string | null;
   email_from: string | null;
   email_date: string | null;
-  /** Opens this message in the user's own mailbox; null for manual steps or unsupported providers. */
+  /** Opens this message (or calendar event) in the user's own account; null for manual steps or unsupported providers. */
   email_url: string | null;
-  source: 'email' | 'manual';
+  /** `calendar`: found on the user's calendar; email_subject is then the event title. */
+  source: 'email' | 'manual' | 'calendar';
   /** The user dismissed it: it no longer counts as needing their action. */
   ignored?: boolean;
 }
@@ -61,7 +62,7 @@ export interface InterviewProcess {
   next_step: string | null;
   remaining_steps: string[];
   notes: string | null;
-  source: 'email' | 'manual';
+  source: 'email' | 'manual' | 'calendar';
   last_activity_at: string | null;
   created_at: string | null;
   job: { id: string; title: string | null; url: string | null } | null;
@@ -81,6 +82,10 @@ export interface SyncStats {
   updated: number;
   applications?: number;
   jobs_marked?: number;
+  /** `no_access`: the mail grant has no calendar scope; reconnecting adds it. */
+  calendar?: 'ok' | 'no_access' | 'error';
+  calendar_events?: number;
+  calendar_added?: number;
 }
 
 export interface MailConnection {

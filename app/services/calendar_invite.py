@@ -84,9 +84,9 @@ class Invite:
             return minutes if 5 <= minutes <= 600 else None
         return None
 
-    def describe(self) -> str:
+    def describe(self, heading: str = "Calendar invitation attached:") -> str:
         """Lines for the extraction prompt."""
-        lines = ["Calendar invitation attached:"]
+        lines = [heading]
         if self.cancelled:
             lines.append("Status: CANCELLED")
         if self.title:
@@ -221,7 +221,49 @@ def parse_invite(text: str) -> Invite | None:
             invite.cancelled = True
     if method == "CANCEL":
         invite.cancelled = True
-    invite.meeting_url = next((u.rstrip(".,;)>") for u in links if _MEETING_HOST.search(u)), None)
+    invite.meeting_url = _meeting_link(links)
     if not (invite.title or invite.start or invite.start_local):
         return None
     return invite
+
+
+def _meeting_link(links: list[str]) -> str | None:
+    return next((u.rstrip(".,;)>") for u in links if _MEETING_HOST.search(u)), None)
+
+
+def epoch_utc(value: object) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).replace(tzinfo=None)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def from_calendar_event(raw: dict) -> Invite | None:
+    """An event read from the user's calendar (Nylas v3 shape). None for all-day events."""
+    when = raw.get("when") if isinstance(raw.get("when"), dict) else {}
+    kind = when.get("object")
+    if kind == "timespan":
+        start, end = epoch_utc(when.get("start_time")), epoch_utc(when.get("end_time"))
+    elif kind == "time":
+        start, end = epoch_utc(when.get("time")), None
+    else:
+        return None
+    if start is None:
+        return None
+    organizer = raw.get("organizer") if isinstance(raw.get("organizer"), dict) else {}
+    name, email = str(organizer.get("name") or "").strip(), str(organizer.get("email") or "").strip()
+    conferencing = raw.get("conferencing") if isinstance(raw.get("conferencing"), dict) else {}
+    details = conferencing.get("details") if isinstance(conferencing.get("details"), dict) else {}
+    location = str(raw.get("location") or "").strip()
+    description = str(raw.get("text_description") or raw.get("description") or "")
+    links = [str(details["url"])] if details.get("url") else []
+    links += _LINK.findall(location) + _LINK.findall(description)
+    return Invite(
+        title=str(raw.get("title") or "").strip()[:300] or None,
+        start=start,
+        end=end,
+        organizer=(f"{name} <{email}>" if name and email else name or email)[:300] or None,
+        location=location[:300] or None,
+        meeting_url=_meeting_link(links),
+        cancelled=str(raw.get("status") or "").lower() == "cancelled",
+    )

@@ -297,6 +297,58 @@ async def download_invite(grant_id: str, message_id: str, attachment_id: str) ->
     return resp.content.decode("utf-8", errors="replace")
 
 
+class CalendarUnavailable(MailError):
+    def __init__(self, message: str = "Calendar access was not granted. Connect your email again to include your calendar."):
+        super().__init__(message, code="calendar_unavailable", status_code=403)
+
+
+async def _calendar_get(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    # Grants made before calendar scopes were added answer 401/403 here while
+    # mail still works, so this must not flag the mailbox for reauth.
+    try:
+        return await _request("GET", path, params=params)
+    except MailAuthError as e:
+        raise CalendarUnavailable() from e
+
+
+async def list_calendars(grant_id: str) -> list[dict[str, Any]]:
+    data = await _calendar_get(f"/v3/grants/{grant_id}/calendars")
+    return [c for c in data.get("data") or [] if isinstance(c, dict) and c.get("id")]
+
+
+def own_calendars(calendars: list[dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
+    """The user's own calendars, primary first; holiday and shared calendars are skipped."""
+    own = [c for c in calendars if c.get("is_primary") or (c.get("is_owned_by_user") and not c.get("read_only"))]
+    return sorted(own, key=lambda c: not c.get("is_primary"))[:limit]
+
+
+async def list_events(
+    grant_id: str, calendar_id: str, *, start: datetime, end: datetime, max_events: int = 1000
+) -> list[dict[str, Any]]:
+    """Events overlapping [start, end], cancelled ones included."""
+    out: list[dict[str, Any]] = []
+    page_token: str | None = None
+    while len(out) < max_events:
+        params: dict[str, Any] = {
+            "calendar_id": calendar_id,
+            "start": str(_epoch(start)),
+            "end": str(_epoch(end)),
+            "limit": 200,
+            "show_cancelled": "true",
+        }
+        if page_token:
+            params["page_token"] = page_token
+        data = await _calendar_get(f"/v3/grants/{grant_id}/events", params)
+        batch = data.get("data") or []
+        if not isinstance(batch, list) or not batch:
+            break
+        out.extend(e for e in batch if isinstance(e, dict) and e.get("id"))
+        page_token = data.get("next_cursor") or None
+        if not page_token:
+            break
+    return out[:max_events]
+
+
 _WS = re.compile(r"[ \t\r\f\v]+")
 _BLANK_LINES = re.compile(r"\n\s*\n+")
 

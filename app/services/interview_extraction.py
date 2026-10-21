@@ -100,6 +100,21 @@ def is_candidate(subject: str | None, snippet: str | None, sender: str | None, *
     return bool(_SIGNALS.search(text) or _APPLIED_SIGNALS.search(text) or _MEETING.search(text))
 
 
+_CALENDAR_SIGNALS = re.compile(r"\b(recruit\w*|hiring|screen(ing)?|candidate|position|role|offer)\b", re.IGNORECASE)
+
+
+def is_calendar_candidate(title: str | None, description: str | None) -> bool:
+    """Could this event on the user's own calendar be a hiring step?
+
+    People add interviews by hand or import them from .ics files, often with
+    only a title like "Acme - AI Engineer" and a join link.
+    """
+    text = f"{title or ''}\n{(description or '')[:2000]}"
+    if not (title or "").strip() or _NOISE_SUBJECTS.search(title or ""):
+        return False
+    return bool(_SIGNALS.search(text) or _MEETING.search(text) or _CALENDAR_SIGNALS.search(text))
+
+
 def company_key(name: str | None) -> str:
     """Normalised company name for grouping ('Acme, Inc.' and 'ACME' match)."""
     value = (name or "").strip().lower()
@@ -137,6 +152,7 @@ Rules:
 - status: "scheduled" when a date and time are confirmed, "needs_scheduling" when they ask for availability or a booking link, "action_required" when the candidate must do something else (complete an assessment, sign, reply), "cancelled" for cancellations, "completed" for thank-you notes after a round, otherwise "info".
 - company: when a staffing agency or recruiting firm runs the process and does not name the employer, use the agency's name (for example "Onward Search") rather than null.
 - A "Calendar invitation attached" block is the event from the email's .ics file. A meeting invite from an employer or recruiter, even one titled only with the company or role, is that round with status "scheduled" (or "cancelled" when it says so); take its time, link and organizer from the block. Personal and non-hiring meetings are relevant=false.
+- An item headed "=== Calendar event id" is an event on the candidate's own calendar, not an email; return it like an email result with that id. "Received" is when the event was created, "From" is the event organizer (it may be the candidate) and the "Calendar event" block is authoritative for time and link. An interview, screen or call with an employer or recruiter is relevant with status "scheduled" (or "cancelled"); the company and role often appear only in the title or description. Personal events, work meetings and anything not tied to a hiring process are relevant=false.
 - scheduled_at: only when the email states a concrete date and time. Resolve relative dates ("tomorrow") from the email's received time. If no timezone is given, use the candidate timezone provided.
 - Never invent companies, times, links or people. Use null when unsure.
 """
@@ -145,10 +161,11 @@ Rules:
 def _user_message(messages: list[dict[str, Any]], tz_name: str) -> str:
     parts = [f"Candidate timezone: {tz_name}", ""]
     for m in messages:
+        label = "Calendar event" if m.get("source") == "calendar" else "Email"
         parts.append(
             "\n".join(
                 [
-                    f"=== Email id: {m['id']}",
+                    f"=== {label} id: {m['id']}",
                     f"Received: {m.get('received_iso') or 'unknown'}",
                     f"From: {m.get('from') or ''}",
                     f"Subject: {m.get('subject') or ''}",
@@ -244,6 +261,9 @@ async def extract_batch(
     """Classify up to BATCH_SIZE emails. Returns id -> normalised result (None = not relevant)."""
     if not messages:
         return {}
+    # Provider ids run past 100 characters (Google calendar event ids) and the
+    # model garbles them when echoing them back, so it only sees short aliases.
+    aliased = [{**m, "id": f"m{i + 1}"} for i, m in enumerate(messages)]
     client = await get_llm_client_for_user(user_id, job_type=LLM_JOB_TYPE)
     text, _ = await chat_completion_with_empty_retry(
         client,
@@ -253,7 +273,7 @@ async def extract_batch(
         model=get_settings().openai_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _user_message(messages, tz_name)},
+            {"role": "user", "content": _user_message(aliased, tz_name)},
         ],
         response_format={"type": "json_object"},
         temperature=0.1,
@@ -263,4 +283,4 @@ async def extract_batch(
     except (json.JSONDecodeError, ValueError, AttributeError) as e:
         logger.warning("interview_extract_bad_json", error=str(e), size=len(messages))
         return {}
-    return {m["id"]: normalize_result(by_id.get(m["id"]), tz_name) for m in messages}
+    return {m["id"]: normalize_result(by_id.get(a["id"]), tz_name) for m, a in zip(messages, aliased)}

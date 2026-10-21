@@ -1,16 +1,18 @@
 """Interview pipeline: mail sync, process matching, stage rules and API payloads.
 
-A process is one hiring loop (company + role). Each relevant email becomes an
-event on a process. Stages only move forward from email (a rejection closes the
+A process is one hiring loop (company + role). Each relevant email, and each
+interview found only on the user's calendar, becomes an event on a process. Stages only move forward from email (a rejection closes the
 process); the user can override the stage at any time from the page.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -159,7 +161,7 @@ async def apply_extraction(
             role_title=result.get("role"),
             stage=initial_stage(kind),
             status="active",
-            source="email",
+            source=message.get("source") or "email",
             job_id=await _linked_job(session, user_id, key),
             last_activity_at=email_date,
         )
@@ -398,6 +400,14 @@ async def run_sync(user_id: str, tz_name: str | None = None) -> dict[str, Any]:
                         conn.sync_cursor = chunk_newest
                 await session.commit()
 
+        try:
+            await sync_calendar(user_id, grant_id, tz_name, stats)
+        except nylas_service.MailAuthError:
+            raise
+        except Exception as e:
+            stats["calendar"] = "error"
+            logger.warning("calendar_sync_failed", user_id=user_id, error_type=type(e).__name__, error=str(e)[:500])
+
         async with get_session() as session:
             try:
                 async with session.begin_nested():
@@ -463,7 +473,13 @@ async def _extract_chunk(
                     m["body"] = f"{event.describe()}\n\n{m.get('body') or m.get('snippet') or ''}"
 
     await asyncio.gather(*(load_body(m) for m in chunk))
+    return await _classify(user_id, chunk, tz_name)
 
+
+async def _classify(
+    user_id: str, items: list[dict[str, Any]], tz_name: str
+) -> dict[str, dict[str, Any] | None]:
+    """Run the model over items with bodies loaded. Ids missing from the result failed and can be retried."""
     llm_sem = asyncio.Semaphore(LLM_CONCURRENCY)
     results: dict[str, dict[str, Any] | None] = {}
 
@@ -474,14 +490,188 @@ async def _extract_chunk(
             except Exception as e:
                 logger.warning("interview_extract_failed", error=str(e), size=len(batch))
 
-    batches = [chunk[i : i + extraction.BATCH_SIZE] for i in range(0, len(chunk), extraction.BATCH_SIZE)]
+    batches = [items[i : i + extraction.BATCH_SIZE] for i in range(0, len(items), extraction.BATCH_SIZE)]
     await asyncio.gather(*(classify(b) for b in batches))
-    for m in chunk:
+    for m in items:
         m.pop("body", None)
         event = m.pop("invite_event", None)
         if event is not None and results.get(m["id"]):
             apply_invite(results[m["id"]], event)
     return results
+
+
+# ── Calendar ────────────────────────────────────────────────────────────────
+
+CALENDAR_PREFIX = "cal:"
+CALENDAR_PAST = timedelta(days=30)
+CALENDAR_AHEAD = timedelta(days=120)
+# Work calendars full of video calls pass the prefilter; the rest wait for the next sync.
+MAX_CALENDAR_CANDIDATES = 150
+
+
+def is_calendar_id(message_id: str | None) -> bool:
+    return bool(message_id) and message_id.startswith(CALENDAR_PREFIX)
+
+
+def calendar_item(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """A calendar event in the shape the extraction expects, or None when it can't be an interview."""
+    if raw.get("recurrence"):
+        return None
+    invite = calendar_invite.from_calendar_event(raw)
+    if invite is None or invite.start is None:
+        return None
+    created = calendar_invite.epoch_utc(raw.get("created_at")) or calendar_invite.epoch_utc(raw.get("updated_at"))
+    description = nylas_service.html_to_text(str(raw.get("text_description") or raw.get("description") or ""))
+    return {
+        "id": f"{CALENDAR_PREFIX}{raw['id']}"[:255],
+        "thread_id": str(raw.get("calendar_id") or "")[:255] or None,
+        "subject": invite.title or "",
+        "from": invite.organizer or "",
+        "snippet": description[:300],
+        "description": description,
+        "date": created,
+        "received_iso": _iso(created),
+        "invite_event": invite,
+        "version": str(raw.get("updated_at") or ""),
+        "source": "calendar",
+    }
+
+
+def update_from_calendar(row: InterviewEvent, invite: calendar_invite.Invite) -> bool:
+    """Follow a stored calendar event when it is moved, cancelled or restored. True when changed."""
+    if invite.cancelled:
+        if row.status == "scheduled":
+            row.status = "cancelled"
+            return True
+        return False
+    changed = False
+    if row.status == "cancelled":
+        row.status = "scheduled"
+        changed = True
+    if invite.start and (row.scheduled_at is None or abs(row.scheduled_at - invite.start) > timedelta(minutes=1)):
+        row.scheduled_at = invite.start
+        row.duration_minutes = invite.duration_minutes or row.duration_minutes
+        changed = True
+    if invite.meeting_url and not row.meeting_url:
+        row.meeting_url = invite.meeting_url[:1000]
+        changed = True
+    return changed
+
+
+async def _scheduled_at(session: AsyncSession, user_id: str, at: datetime) -> InterviewEvent | None:
+    """A booking already on the pipeline at this time (usually from the invite email)."""
+    rows = (
+        await session.execute(
+            select(InterviewEvent)
+            .where(
+                InterviewEvent.user_id == user_id,
+                InterviewEvent.status == "scheduled",
+                InterviewEvent.scheduled_at.between(at - SAME_BOOKING, at + SAME_BOOKING),
+            )
+            .limit(1)
+        )
+    ).scalars()
+    return next(iter(rows), None)
+
+
+async def sync_calendar(user_id: str, grant_id: str, tz_name: str, stats: dict[str, Any]) -> None:
+    """Add interviews that exist only on the user's calendar, and follow moves and cancellations."""
+    now = _utcnow()
+    start, end = now - CALENDAR_PAST, now + CALENDAR_AHEAD
+    try:
+        calendars = nylas_service.own_calendars(await nylas_service.list_calendars(grant_id))
+    except nylas_service.CalendarUnavailable:
+        stats["calendar"] = "no_access"
+        return
+    raw_events: dict[str, dict[str, Any]] = {}
+    complete = True
+    for cal in calendars:
+        try:
+            for raw in await nylas_service.list_events(grant_id, str(cal["id"]), start=start, end=end):
+                raw_events.setdefault(str(raw["id"]), raw)
+        except nylas_service.MailError as e:
+            complete = False
+            logger.info("calendar_events_failed", user_id=user_id, error=str(e)[:300])
+    items = [i for i in (calendar_item(r) for r in raw_events.values()) if i]
+    present = {i["id"] for i in items}
+    stats["calendar_events"] = len(items)
+
+    async with get_session() as session:
+        conn = await nylas_service.get_connection(session, user_id)
+        if conn is None:
+            return
+        seen: dict[str, str] = dict(conn.calendar_seen or {})
+        stored = {
+            e.message_id: e
+            for e in (
+                await session.execute(
+                    select(InterviewEvent).where(
+                        InterviewEvent.user_id == user_id, InterviewEvent.message_id.like(f"{CALENDAR_PREFIX}%")
+                    )
+                )
+            ).scalars()
+        }
+        fresh: list[dict[str, Any]] = []
+        for item in items:
+            row = stored.get(item["id"])
+            if row is not None:
+                seen[item["id"]] = item["version"]
+                if update_from_calendar(row, item["invite_event"]):
+                    stats["updated"] += 1
+            elif seen.get(item["id"]) != item["version"] and extraction.is_calendar_candidate(
+                item["subject"], item["description"]
+            ):
+                fresh.append(item)
+        if complete:
+            for message_id, row in stored.items():
+                if message_id not in present and row.status == "scheduled" and row.scheduled_at and now <= row.scheduled_at <= end:
+                    row.status = "cancelled"
+                    stats["updated"] += 1
+
+        todo: list[dict[str, Any]] = []
+        for item in fresh:
+            invite: calendar_invite.Invite = item["invite_event"]
+            booked = None if invite.cancelled else await _scheduled_at(session, user_id, invite.start)
+            if booked is None:
+                todo.append(item)
+                continue
+            if invite.meeting_url and not booked.meeting_url:
+                booked.meeting_url = invite.meeting_url[:1000]
+            if invite.duration_minutes and not booked.duration_minutes:
+                booked.duration_minutes = invite.duration_minutes
+            seen[item["id"]] = item["version"]
+        await session.commit()
+
+    # Upcoming events first, then the most recent past ones.
+    todo.sort(key=lambda i: (i["invite_event"].start < now, abs((i["invite_event"].start - now).total_seconds())))
+    todo = todo[:MAX_CALENDAR_CANDIDATES]
+    for item in todo:
+        item["body"] = f"{item['invite_event'].describe('Calendar event:')}\n\n{item['description']}".strip()
+    results = await _classify(user_id, todo, tz_name) if todo else {}
+
+    async with get_session() as session:
+        for item in todo:
+            if item["id"] not in results:
+                continue
+            seen[item["id"]] = item["version"]
+            result = results[item["id"]]
+            if not result or result["kind"] in ("application_received", "rejection"):
+                continue
+            stats["relevant"] += 1
+            stats["calendar_added"] = stats.get("calendar_added", 0) + 1
+            try:
+                async with session.begin_nested():
+                    outcome = await apply_extraction(session, user_id, item, result)
+            except Exception as e:
+                logger.warning("calendar_apply_failed", user_id=user_id, error_type=type(e).__name__, error=str(e)[:500])
+                continue
+            if outcome in ("created", "updated"):
+                stats[outcome] += 1
+        conn = await nylas_service.get_connection(session, user_id)
+        if conn is not None:
+            conn.calendar_seen = {k: v for k, v in seen.items() if k in present} if complete else seen
+        await session.commit()
+    stats["calendar"] = "ok"
 
 
 def apply_invite(result: dict[str, Any], event: calendar_invite.Invite) -> None:
@@ -496,7 +686,7 @@ def apply_invite(result: dict[str, Any], event: calendar_invite.Invite) -> None:
     if event.start:
         result["scheduled_at"] = event.start
         result["duration_minutes"] = event.duration_minutes or result.get("duration_minutes")
-    if event.meeting_url and not result.get("meeting_url"):
+    if event.meeting_url:
         result["meeting_url"] = event.meeting_url[:1000]
 
 
@@ -516,6 +706,28 @@ async def _finish_with_error(user_id: str, message: str, *, needs_reauth: bool =
 # ── Payloads ────────────────────────────────────────────────────────────────
 
 
+def event_source(e: InterviewEvent) -> str:
+    if is_calendar_id(e.message_id):
+        return "calendar"
+    return "email" if e.message_id else "manual"
+
+
+def event_url(conn: MailConnection | None, e: InterviewEvent) -> str | None:
+    """Opens the source of this step: the email, or the event in the user's calendar."""
+    if not is_calendar_id(e.message_id):
+        return mail_applications.email_url(conn, e.message_id, e.thread_id)
+    if conn is None:
+        return None
+    event_id = e.message_id[len(CALENDAR_PREFIX) :]
+    provider = (conn.provider or "").lower()
+    if provider == "google":
+        eid = base64.b64encode(f"{event_id} {e.thread_id or conn.email}".encode()).decode().rstrip("=")
+        return f"https://calendar.google.com/calendar/event?eid={quote(eid, safe='')}"
+    if provider in ("microsoft", "ews"):
+        return f"https://outlook.office.com/calendar/item/{quote(event_id, safe='')}"
+    return None
+
+
 def event_public(e: InterviewEvent, conn: MailConnection | None = None) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -532,8 +744,8 @@ def event_public(e: InterviewEvent, conn: MailConnection | None = None) -> dict[
         "email_subject": e.email_subject,
         "email_from": e.email_from,
         "email_date": _iso(e.email_date),
-        "email_url": mail_applications.email_url(conn, e.message_id, e.thread_id),
-        "source": "email" if e.message_id else "manual",
+        "email_url": event_url(conn, e),
+        "source": event_source(e),
         "ignored": e.ignored_at is not None,
     }
 
@@ -583,7 +795,7 @@ def process_public(
         "job": job,
         "events": [event_public(e, conn) for e in ordered],
         "next_event": event_public(upcoming[0], conn) if upcoming else None,
-        "email_url": mail_applications.email_url(conn, primary.message_id, primary.thread_id) if primary else None,
+        "email_url": event_url(conn, primary) if primary else None,
         "needs_action": p.status == "active" and any(needs_user(e) for e in events),
     }
 

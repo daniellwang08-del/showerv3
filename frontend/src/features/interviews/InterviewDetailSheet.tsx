@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
+  CalendarDays,
   Check,
   ExternalLink,
   Eye,
@@ -270,10 +271,14 @@ export function InterviewDetailSheet({
           {readOnly
             ? process.source === 'manual'
               ? 'Added by hand'
-              : 'Built from hiring emails'
+              : process.source === 'calendar'
+                ? 'Built from calendar events'
+                : 'Built from hiring emails'
             : process.source === 'manual'
               ? 'Added by you'
-              : 'Built from your email'}
+              : process.source === 'calendar'
+                ? 'Built from your calendar'
+                : 'Built from your email'}
         </span>
         {readOnly ? null : (
           <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setConfirmDelete(true)}>
@@ -304,6 +309,11 @@ export function InterviewDetailSheet({
       </AlertDialog>
     </div>
   );
+}
+
+function SourceIcon({ source }: { source: InterviewEvent['source'] }) {
+  const Icon = source === 'calendar' ? CalendarDays : Mail;
+  return <Icon className="size-3.5 shrink-0" aria-hidden />;
 }
 
 function Block({ title, children }: { title: string; children: ReactNode }) {
@@ -375,15 +385,21 @@ function TimelineItem({ event, readOnly }: { event: InterviewEvent; readOnly: bo
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex min-w-0 items-center gap-1 text-brand hover:underline"
-            title={event.email_from ? `Open the email from ${event.email_from}` : 'Open the email'}
+            title={
+              event.source === 'calendar'
+                ? 'Open the event in your calendar'
+                : event.email_from
+                  ? `Open the email from ${event.email_from}`
+                  : 'Open the email'
+            }
           >
-            <Mail className="size-3.5 shrink-0" aria-hidden />
+            <SourceIcon source={event.source} />
             <span className="truncate">{event.email_subject}</span>
             <ExternalLink className="size-3 shrink-0" aria-hidden />
           </a>
         ) : event.email_subject ? (
           <span className="inline-flex min-w-0 items-center gap-1" title={event.email_from ?? undefined}>
-            <Mail className="size-3.5 shrink-0" aria-hidden />
+            <SourceIcon source={event.source} />
             <span className="truncate">{event.email_subject}</span>
           </span>
         ) : null}

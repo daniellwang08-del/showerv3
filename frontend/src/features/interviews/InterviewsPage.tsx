@@ -329,9 +329,17 @@ function SyncBar({ connection, syncing }: { connection: MailConnection; syncing:
       {stats && !syncing ? (
         <span className="flex items-center gap-1.5 tabular-nums">
           {!failed ? <Inbox className="size-3.5" aria-hidden /> : null}
-          Last sync: {stats.scanned} emails checked · {stats.relevant} about your applications
+          Last sync: {stats.scanned} emails
+          {stats.calendar === 'ok' ? ` and ${stats.calendar_events ?? 0} calendar events` : ''} checked ·{' '}
+          {stats.relevant} about your applications
           {stats.applications ? ` · ${stats.applications} new applications` : ''}
           {stats.created || stats.updated ? ` · ${stats.created} new, ${stats.updated} updated processes` : ''}
+        </span>
+      ) : null}
+      {stats?.calendar === 'no_access' && !syncing ? (
+        <span className="flex items-center gap-1.5">
+          <CalendarClock className="size-3.5" aria-hidden />
+          Calendar not included. Disconnect and connect your email again to track calendar events.
         </span>
       ) : null}
     </div>
