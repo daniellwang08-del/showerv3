@@ -140,6 +140,8 @@ export function setDraft(p) {
   patch({ ...p, error: null });
 }
 
+const CAPTURE_PERMISSION = { origins: ["<all_urls>"] };
+
 async function dataUrlToFile(dataUrl, name) {
   const blob = await (await fetch(dataUrl)).blob();
   return new File([blob], name, { type: blob.type || "image/png" });
@@ -159,10 +161,10 @@ export async function captureTab() {
     try {
       dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
     } catch {
-      const origin = new URL(tab.url).origin;
-      const granted = await chrome.permissions.request({ origins: [`${origin}/*`] }).catch(() => false);
+      // Chrome only captures with activeTab or <all_urls>; access to the one site is not enough.
+      const granted = await chrome.permissions.request(CAPTURE_PERMISSION).catch(() => false);
       if (!granted) {
-        toast("NAO needs access to this site to capture it. Paste or upload a screenshot instead.", "danger");
+        toast("NAO needs access to your tabs to capture the page. Paste or upload a screenshot instead.", "danger");
         return;
       }
       dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
@@ -170,8 +172,8 @@ export async function captureTab() {
     const host = new URL(tab.url).hostname.replace(/^www\./, "");
     const file = await dataUrlToFile(dataUrl, `Screenshot ${host} ${stamp()}.png`);
     if (addFiles([file])) toast("Screenshot of the page added.", "ok");
-  } catch (err) {
-    toast(messageOf(err, "Could not capture the page. Paste or upload a screenshot instead."), "danger");
+  } catch {
+    toast("Could not capture this page. Paste or upload a screenshot instead.", "danger");
   } finally {
     patch({ capturing: false });
   }

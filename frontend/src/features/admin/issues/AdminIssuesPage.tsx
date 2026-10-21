@@ -241,14 +241,14 @@ function IssuesTable({
 }) {
   return (
     <div className="scrollbar-thin overflow-auto rounded-xl border bg-card">
-      <table className="w-full min-w-[720px] border-collapse text-sm">
+      <table className="w-full min-w-[720px] table-fixed border-collapse text-sm">
         <thead className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--color-border)]">
           <tr className="text-left text-xs text-muted-foreground">
             <th scope="col" className="px-3 py-2 font-medium">Issue</th>
-            <th scope="col" className="px-3 py-2 font-medium">Reporter</th>
-            <th scope="col" className="px-3 py-2 font-medium">Status</th>
-            <th scope="col" className="hidden px-3 py-2 font-medium md:table-cell">Topic</th>
-            <th scope="col" className="px-3 py-2 text-right font-medium">Reported</th>
+            <th scope="col" className="w-60 px-3 py-2 font-medium">Reporter</th>
+            <th scope="col" className="w-32 px-3 py-2 font-medium">Status</th>
+            <th scope="col" className="hidden w-48 px-3 py-2 font-medium md:table-cell">Topic</th>
+            <th scope="col" className="w-32 px-3 py-2 text-right font-medium">Reported</th>
           </tr>
         </thead>
         <tbody className="divide-y">
