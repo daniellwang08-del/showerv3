@@ -26,8 +26,8 @@ from sqlalchemy import and_, func, or_, select
 
 from app.core.logging import get_logger
 from app.models.database import Job, JobExtraction, JobMatchResult, ResumeBuildResult, User, UserJobStatus
-from app.services.job_add_batches import job_share_visibility_clause, users_who_can_see_job
-from app.services.job_pipeline_mode import extraction_has_shared_jd
+from app.services.job_add_batches import job_owner_id, job_share_visibility_clause, users_who_can_see_job
+from app.services.job_pipeline_mode import extraction_has_shared_jd, normalize_manual_submit_pipeline
 from app.storage.database import get_session
 
 logger = get_logger(__name__)
@@ -243,8 +243,15 @@ async def fanout_auto_prepare_for_job(
 ) -> dict[str, Any]:
     """After shared JD is ready: enqueue analyze for each opted-in user who can see the job.
 
-    ``user_ids`` limits the fan-out (people a share just reached).
+    ``user_ids`` limits the fan-out (people a share just reached). A job a
+    member added goes through ``_fanout_member_add`` instead.
     """
+    async with get_session() as session:
+        meta = (await session.execute(select(Job.raw_metadata).where(Job.id == job_id))).scalar_one_or_none()
+    owner_id = job_owner_id(meta)
+    if owner_id:
+        return await _fanout_member_add(job_id, owner_id, extraction_id, user_ids=user_ids, source=source)
+
     if not await _auto_prepare_globally_enabled():
         logger.info("auto_prepare_fanout_paused", job_id=job_id)
         return {"job_id": job_id, "enqueued": 0, "skipped": 0, "users": 0, "paused": True}
@@ -350,6 +357,122 @@ async def fanout_auto_prepare_for_job(
     }
 
 
+async def _member_add_depths(session, job_ids: list[str], manual_submit_pipeline: Any) -> dict[str, bool | None]:
+    """``skip_phase_b`` for the member adds among ``job_ids``; scraped jobs are left out."""
+    if not job_ids:
+        return {}
+    rows = (await session.execute(select(Job.id, Job.raw_metadata).where(Job.id.in_(job_ids)))).all()
+    depth = member_add_skip_phase_b(manual_submit_pipeline)
+    return {job_id: depth for job_id, meta in rows if job_owner_id(meta)}
+
+
+def member_add_skip_phase_b(manual_submit_pipeline: Any) -> bool | None:
+    """How far a member's add runs for someone it is shared with, by their own
+    add preference: None (extract only, no personal run), True (match only) or
+    False (end to end).
+    """
+    mode = normalize_manual_submit_pipeline(manual_submit_pipeline)
+    if mode == "extract":
+        return None
+    return mode == "match"
+
+
+async def _fanout_member_add(
+    job_id: str,
+    owner_id: str,
+    extraction_id: str | None,
+    *,
+    user_ids: list[str] | None,
+    source: str,
+) -> dict[str, Any]:
+    """Run a member's add for the people it is shared with, as if they had added it.
+
+    Depth follows each person's ``manual_submit_pipeline``, not the auto-prepare
+    flags for scraped inventory, and the platform auto-prepare pause does not
+    apply (a manual add is never paused). The owner runs their own chain. Jobs
+    that miss someone's preferences are hidden for them by post-analysis dedup
+    (score, countries, duplicates); nothing is deleted.
+    """
+    from app.services.signup_approval_service import can_use_app_clause
+
+    out: dict[str, Any] = {"job_id": job_id, "enqueued": 0, "skipped": 0, "users": 0, "member_add": True}
+    async with get_session() as session:
+        ext_id = extraction_id or (
+            await session.execute(select(Job.extraction_id).where(Job.id == job_id))
+        ).scalar_one_or_none()
+        extraction = (
+            (await session.execute(select(JobExtraction).where(JobExtraction.id == ext_id))).scalar_one_or_none()
+            if ext_id
+            else None
+        )
+        if not extraction_has_shared_jd(extraction):
+            return {**out, "error": "jd_not_ready"}
+
+        conds = [can_use_app_clause(), User.id != owner_id, User.is_admin.is_(False)]
+        if user_ids is not None:
+            if not user_ids:
+                return out
+            conds.append(User.id.in_(user_ids))
+        users = (
+            await session.execute(
+                select(User.id, User.manual_submit_pipeline).where(*conds).limit(AUTO_PREPARE_FANOUT_MAX_USERS)
+            )
+        ).all()
+        if not users:
+            return out
+        candidate_ids = [u.id for u in users]
+        visible = await users_who_can_see_job(session, job_id, candidate_ids)
+        if not visible:
+            return {**out, "users": 0}
+        handled = set(
+            (
+                await session.execute(
+                    select(JobMatchResult.user_id).where(
+                        JobMatchResult.job_id == job_id, JobMatchResult.user_id.in_(visible)
+                    )
+                )
+            ).scalars().all()
+        )
+        # Already hidden for them (location rules, a manual hide): stays hidden.
+        handled |= set(
+            (
+                await session.execute(
+                    select(UserJobStatus.user_id).where(
+                        UserJobStatus.job_id == job_id,
+                        UserJobStatus.user_id.in_(visible),
+                        UserJobStatus.status != "active",
+                    )
+                )
+            ).scalars().all()
+        )
+        scorable = await _scorable_user_ids(session, sorted(visible))
+
+    out["users"] = len(visible)
+    idx = 0
+    for user in users:
+        if user.id not in visible:
+            continue
+        skip_phase_b = member_add_skip_phase_b(user.manual_submit_pipeline)
+        if user.id in handled or user.id not in scorable or skip_phase_b is None:
+            out["skipped"] += 1
+            continue
+        defer_by = timedelta(seconds=min(idx * 0.25, 30.0)) if idx else None
+        idx += 1
+        if await _enqueue_analyze(
+            job_id,
+            user.id,
+            extraction_id=ext_id,
+            skip_phase_b=skip_phase_b,
+            source=f"member_add:{source}",
+            defer_by=defer_by,
+        ):
+            out["enqueued"] += 1
+        else:
+            out["skipped"] += 1
+    logger.info("auto_prepare_member_add_fanout_complete", owner_id=owner_id, source=source, **out)
+    return out
+
+
 async def fanout_shared_batch(batch_id: str, user_ids: list[str] | None = None) -> dict[str, Any]:
     """Score a just-shared add session for the people it now reaches (free engine)."""
     from app.services.job_add_batches import batch_job_ids
@@ -400,6 +523,7 @@ async def catch_up_free_scores_on_visit(user_id: str) -> dict[str, Any]:
                 select(
                     User.auto_prepare_match,
                     User.auto_prepare_full,
+                    User.manual_submit_pipeline,
                     User.is_active,
                     User.is_admin,
                     User.country_preferences,
@@ -426,9 +550,13 @@ async def catch_up_free_scores_on_visit(user_id: str) -> dict[str, Any]:
             if pool is not None:
                 extra.append(pool)
         rows = (await session.execute(_missing_match_stmt(user_id, limit, *extra))).all()
+        member_adds = await _member_add_depths(session, [r[0] for r in rows], user.manual_submit_pipeline)
 
-    skip_phase_b = not bool(user.auto_prepare_full)
+    default_skip = not bool(user.auto_prepare_full)
     for idx, (job_id, extraction_id) in enumerate(rows):
+        skip_phase_b = member_adds.get(job_id, default_skip)
+        if skip_phase_b is None:
+            continue
         defer_by = timedelta(seconds=min(idx * 0.2, 30.0)) if idx else None
         if await _enqueue_analyze(
             job_id,
@@ -475,6 +603,10 @@ async def backfill_auto_prepare_for_user(
         missing_rows = (await session.execute(_missing_match_stmt(user_id, limit + 1))).all()
         remaining = max(0, len(missing_rows) - limit)
         analyze_targets = missing_rows[:limit]
+        manual_mode = (
+            await session.execute(select(User.manual_submit_pipeline).where(User.id == user_id))
+        ).scalar_one_or_none()
+        member_adds = await _member_add_depths(session, [r[0] for r in analyze_targets], manual_mode)
 
         tailor_targets: list[tuple[str, str | None]] = []
         if full:
@@ -521,8 +653,10 @@ async def backfill_auto_prepare_for_user(
             )
             tailor_targets = list((await session.execute(tailor_stmt)).all())
 
-    skip_phase_b = not full
     for idx, (job_id, extraction_id) in enumerate(analyze_targets):
+        skip_phase_b = member_adds.get(job_id, not full)
+        if skip_phase_b is None:
+            continue
         defer_by = timedelta(seconds=min(idx * 0.5, 60.0)) if idx else None
         ok = await _enqueue_analyze(
             job_id,

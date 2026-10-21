@@ -8151,7 +8151,7 @@ async def post_jobs_to_pumble(
 OLD_JOB_THRESHOLD_DAYS = 60
 
 
-@router.get("/jobs/old-jobs/count", dependencies=[Depends(get_current_user)])
+@router.get("/jobs/old-jobs/count", dependencies=[Depends(require_admin)])
 async def count_old_jobs() -> dict:
     """Count jobs created more than 2 months ago."""
     cutoff = _utcnow() - timedelta(days=OLD_JOB_THRESHOLD_DAYS)
@@ -8167,9 +8167,9 @@ async def count_old_jobs() -> dict:
     }
 
 
-@router.delete("/jobs/old-jobs", dependencies=[Depends(get_current_user)])
+@router.delete("/jobs/old-jobs", dependencies=[Depends(require_admin)])
 async def delete_old_jobs() -> dict:
-    """Delete all jobs created more than 2 months ago."""
+    """Admin: delete all jobs created more than 2 months ago, for everyone."""
     cutoff = _utcnow() - timedelta(days=OLD_JOB_THRESHOLD_DAYS)
     async with get_session() as session:
         old_rows = await session.execute(

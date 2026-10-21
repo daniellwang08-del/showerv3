@@ -182,16 +182,16 @@ async def extract_job(
                     error=str(lookup_err),
                 )
             then: dict | None = None
-            if valid_job_id and user_id and chain_analysis:
-                then = {
-                    "analyze": {
+            if valid_job_id:
+                # The fan-out also runs after a member's own add: the people the
+                # add is shared with get it processed by their own preferences.
+                then = {"fanout": {"extraction_id": job_id}}
+                if user_id and chain_analysis:
+                    then["analyze"] = {
                         "user_id": user_id,
                         "extraction_id": job_id,
                         "skip_phase_b": bool(skip_phase_b),
                     }
-                }
-            elif valid_job_id and not user_id:
-                then = {"fanout": {"extraction_id": job_id}}
             # The job must be encoded before the vector engine can score it, so
             # analysis / fan-out rides on the encode task and starts on a warm
             # encoding. When the encode cannot carry it, it runs here as before.
