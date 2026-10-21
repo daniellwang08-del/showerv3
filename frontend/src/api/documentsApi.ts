@@ -2,6 +2,8 @@ import { API_BASE_URL, apiClient } from './client';
 import type { ResumeDesign } from '../types/resumeDesign';
 import type { ResumeLibraryItem } from '../types/resumeLibrary';
 import { filenameFromContentDisposition } from '../utils/resumeFileName';
+import { queryClient } from '../lib/queryClient';
+import { STORE_KEY } from '../features/plans/storeModel';
 
 export type DocumentFileType = 'resume_pdf' | 'resume_docx' | 'cover_letter_pdf' | 'cover_letter_docx';
 export type BuildFileStatus = 'pending' | 'processing' | 'completed' | 'failed' | string;
@@ -207,6 +209,7 @@ export async function tailorFromJobDescription(
       return;
     }
     if (parsed.stage === 'done') {
+      void queryClient.invalidateQueries({ queryKey: STORE_KEY });
       result = {
         resume: parsed.resume ?? null,
         match: parsed.match ?? null,

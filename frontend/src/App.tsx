@@ -15,6 +15,7 @@ import { adminNav, applicantNav, legacyRedirects } from './shells/nav';
 import { coalesce } from './lib/coalesce';
 import { queryClient } from './lib/queryClient';
 import { integrationKeys } from './features/integrations/queries';
+import { STORE_KEY } from './features/plans/storeModel';
 import { Skeleton } from './components/ui/skeleton';
 import { PageTitle } from './components/app/PageTitle';
 
@@ -128,7 +129,11 @@ const refresh = {
   afterSubmit: coalesce(() => void useScraperStore.getState().refreshAfterJobSubmit()),
   queries: coalesce(() => void queryClient.invalidateQueries({ queryKey: ['jobs'] })),
   syncActivity: coalesce(() => void queryClient.invalidateQueries({ queryKey: integrationKeys.jobSiteActivity })),
+  credits: coalesce(() => void queryClient.invalidateQueries({ queryKey: STORE_KEY })),
 };
+
+const NO_CREDITS_NOTICE_MS = 60_000;
+let lastNoCreditsNotice = 0;
 
 const SCRAPER_EVENTS = new Set([
   'sync_started',
@@ -252,6 +257,18 @@ function handleWsEvent(event: WsEvent) {
   if (event.type === 'extraction_failed' && (event.error || event.message)) {
     const detail = String(event.error || event.message).trim();
     if (detail) useUIStore.getState().notify('error', detail, 8000);
+  }
+
+  if (event.type === 'tailored_content_completed' || event.type === 'tailored_content_failed') {
+    refresh.credits();
+  }
+
+  if (event.type === 'tailored_content_failed' && event.reason === 'no_credits') {
+    const now = Date.now();
+    if (now - lastNoCreditsNotice > NO_CREDITS_NOTICE_MS) {
+      lastNoCreditsNotice = now;
+      useUIStore.getState().notify('warning', event.error || 'Out of credits. Add credits on the Plans page.', 10000);
+    }
   }
 
   if (PIPELINE_EVENTS.has(event.type)) {

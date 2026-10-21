@@ -7330,7 +7330,11 @@ async def trigger_resume_build(
         await pool.enqueue_job("build_resume_task", job_id, user_id)
         return {"success": True, "message": "Cover letter build enqueued" if original else "Resume build enqueued"}
 
+    from app.services import credit_service
     from app.services.job_match_orchestrator import enqueue_tailored_content_generation
+
+    if not await credit_service.can_prepare(job_id, user_id):
+        raise HTTPException(status_code=402, detail=credit_service.NO_CREDITS_MESSAGE)
     enqueued = await enqueue_tailored_content_generation(job_id, user_id, manual=True)
     if not enqueued:
         raise HTTPException(

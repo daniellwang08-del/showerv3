@@ -831,6 +831,13 @@ export function DetailContentPanel({
                     {retryingBuild ? 'Retrying…' : 'Retry resume generation'}
                   </button>
                   {retryError && <p className="text-xs text-destructive">{retryError}</p>}
+                  {/out of credits/i.test(
+                    `${analysis.resume_build.content_generation_error ?? ''} ${retryError ?? ''}`,
+                  ) && (
+                    <a href="/app/plans" className="block text-xs font-medium text-primary underline-offset-2 hover:underline">
+                      Get credits on the Plans page
+                    </a>
+                  )}
                 </div>
               )}
 

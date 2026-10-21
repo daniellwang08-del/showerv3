@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import bind_logging_context, get_logger
 from app.models.database import Job, UserJobStatus, ValidJobUserApplication
 from app.models.schemas import ExtractionStatus, JobDescriptionSchema
+from app.services import credit_service
 from app.services.system_settings_service import (
     get_effective_value,
     get_effective_value_sync,
@@ -136,6 +137,15 @@ async def enqueue_tailored_content_generation(
     *,
     manual: bool = False,
 ) -> bool:
+    if not manual:
+        try:
+            affordable = await credit_service.can_prepare(job_id, user_id)
+        except Exception as e:  # noqa: BLE001 - the worker charges (or refuses) anyway
+            logger.warning("tailored_content_credit_check_failed", job_id=job_id, error=str(e))
+            affordable = True
+        if not affordable:
+            logger.info("tailored_content_paused_no_credits", job_id=job_id, user_id=user_id)
+            return False
     try:
         from app.tasks.worker import get_tailoring_pool, TAILORING_QUEUE
         from app.core.redis_support import pipeline_job_id
@@ -876,6 +886,8 @@ async def run_tailored_content_generation(
     """
     bind_logging_context(job_id=job_id, user_id=user_id)
 
+    charged = False
+    stored = False
     try:
         skip_reason = await _tailoring_skip_reason(job_id, user_id, manual=manual)
         if skip_reason:
@@ -908,6 +920,21 @@ async def run_tailored_content_generation(
             extraction = await ext_repo.get_by_id(ext_id)
             if extraction and extraction.is_job_posting is False:
                 await resume_repo.mark_content_skipped(job_id, user_id)
+                return None
+
+            try:
+                charged = await credit_service.charge_job_preparation(job_id, user_id)
+            except credit_service.OutOfCredits:
+                logger.info("tailored_content_no_credits", job_id=job_id, user_id=user_id, manual=manual)
+                await resume_repo.fail_content_generation(job_id, user_id, credit_service.NO_CREDITS_MESSAGE)
+                await session.commit()
+                await publish_ws_event({
+                    "type": "tailored_content_failed",
+                    "user_id": user_id,
+                    "job_id": job_id,
+                    "error": credit_service.NO_CREDITS_MESSAGE,
+                    "reason": "no_credits",
+                })
                 return None
 
             await resume_repo.mark_content_generating(job_id, user_id)
@@ -1047,6 +1074,7 @@ async def run_tailored_content_generation(
                     tailored_resume_data=tailored_resume,
                     cover_letter_data=cover_letter,
                 )
+        stored = True
 
         await publish_ws_event({
             "type": "tailored_content_completed",
@@ -1071,3 +1099,14 @@ async def run_tailored_content_generation(
                 error=str(cleanup_err),
             )
         raise
+    finally:
+        if charged and not stored:
+            try:
+                await credit_service.refund_job_preparation(job_id, user_id)
+            except Exception as refund_err:
+                logger.error(
+                    "credits_job_prepare_refund_failed",
+                    job_id=job_id,
+                    user_id=user_id,
+                    error=str(refund_err),
+                )

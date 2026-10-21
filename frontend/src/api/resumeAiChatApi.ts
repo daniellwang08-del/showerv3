@@ -1,5 +1,7 @@
 import { API_BASE_URL, apiClient } from './client';
 import type { ResumeContent } from '@/types/resumeDesign';
+import { queryClient } from '@/lib/queryClient';
+import { STORE_KEY } from '@/features/plans/storeModel';
 
 export type ResumeAiChatRole = 'user' | 'assistant';
 
@@ -124,6 +126,7 @@ export async function streamResumeAiChat(
     const stage = String(frame.stage || '');
     if (stage === 'done' && frame.result && typeof frame.result === 'object') {
       result = frame.result as ResumeAiChatResult;
+      if (result.action === 'tailored') void queryClient.invalidateQueries({ queryKey: STORE_KEY });
       return;
     }
     if (stage === 'error') {

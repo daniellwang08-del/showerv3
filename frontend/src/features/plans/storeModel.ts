@@ -40,6 +40,14 @@ export function ledgerLabel(entry: LedgerEntry): string {
       return entry.note ?? 'Credit package';
     case 'admin_adjust':
       return entry.note ?? 'Adjusted by NAO';
+    case 'job_prepare':
+      return entry.note ? `Prepared ${entry.note}` : 'Prepared a job';
+    case 'job_prepare_refund':
+      return entry.note ? `Refund, preparation failed: ${entry.note}` : 'Refund, preparation failed';
+    case 'tailor':
+      return entry.note ? `Tailored a resume for ${entry.note}` : 'Tailored a resume';
+    case 'tailor_refund':
+      return entry.note ? `Refund, tailoring failed: ${entry.note}` : 'Refund, tailoring failed';
     default:
       return entry.note ?? 'Balance change';
   }

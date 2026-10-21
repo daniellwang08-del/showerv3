@@ -48,7 +48,15 @@ export interface LedgerEntry {
   id: string;
   delta: number;
   balance_after: number;
-  reason: 'signup_bonus' | 'package' | 'admin_adjust' | string;
+  reason:
+    | 'signup_bonus'
+    | 'package'
+    | 'admin_adjust'
+    | 'job_prepare'
+    | 'job_prepare_refund'
+    | 'tailor'
+    | 'tailor_refund'
+    | string;
   note: string | null;
   created_at: string | null;
 }

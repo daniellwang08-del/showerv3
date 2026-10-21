@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.api.routes import get_current_user, require_admin, require_applicant
 from app.models.database import User
-from app.services import store_service
+from app.services import credit_service, store_service
 from app.storage.database import get_session
 
 router = APIRouter(prefix="/store", tags=["store"])
@@ -81,7 +81,9 @@ async def get_ledger(
 
 
 @router.post("/packages/{package_id}/redeem", dependencies=_applicant)
-async def redeem_package(package_id: str, current_user: dict = Depends(get_current_user)):
+async def redeem_package(
+    package_id: str, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)
+):
     async with get_session() as session:
         try:
             data = await store_service.redeem_credits(session, await _me(session, current_user), package_id)
@@ -90,6 +92,7 @@ async def redeem_package(package_id: str, current_user: dict = Depends(get_curre
         except store_service.StoreNotFound as e:
             raise _not_found() from e
         await session.commit()
+    background_tasks.add_task(credit_service.resume_auto_prepare, current_user["user_id"])
     return data
 
 
@@ -198,7 +201,12 @@ async def admin_grant(user_id: str, body: GrantRequest, current_user: dict = Dep
 
 
 @router.post("/admin/users/{user_id}/adjust", dependencies=_admin)
-async def admin_adjust(user_id: str, body: AdjustRequest, current_user: dict = Depends(get_current_user)):
+async def admin_adjust(
+    user_id: str,
+    body: AdjustRequest,
+    background_tasks: BackgroundTasks,
+    current_user: dict = Depends(get_current_user),
+):
     async with get_session() as session:
         target = await _target(session, user_id)
         try:
@@ -206,5 +214,7 @@ async def admin_adjust(user_id: str, body: AdjustRequest, current_user: dict = D
         except store_service.StoreError as e:
             raise _bad_request(e) from e
         await session.commit()
+        if body.delta > 0:
+            background_tasks.add_task(credit_service.resume_auto_prepare, target.id)
         await session.refresh(target)
         return await store_service.admin_summary(session, target)

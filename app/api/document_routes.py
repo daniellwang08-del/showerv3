@@ -455,6 +455,11 @@ async def tailor_from_job_description(body: TailorRequest, current_user: dict = 
                         "message": "Add your experience on the Profile page first, then try again.",
                     })
                     return
+                if out.get("error") == "no_credits":
+                    from app.services.credit_service import NO_CREDITS_TAILOR_MESSAGE
+
+                    await queue.put({"stage": "error", "message": NO_CREDITS_TAILOR_MESSAGE, "reason": "no_credits"})
+                    return
                 if not out.get("is_job_posting"):
                     await queue.put({
                         "stage": "error",

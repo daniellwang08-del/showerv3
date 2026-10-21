@@ -18,6 +18,8 @@ import { useScraperStore, type AgentDashboardSnapshot } from './scraperStore';
 import { useJobsStore } from './jobsStore';
 import { useResumeBuilderStore } from './resumeBuilderStore';
 import { agentNavigate } from '../lib/agentNavigation';
+import { queryClient } from '../lib/queryClient';
+import { STORE_KEY } from '../features/plans/storeModel';
 
 // ---------------------------------------------------------------------------
 // Timeline model
@@ -200,6 +202,7 @@ function applyRefresh(targets: string[]) {
   }
   if (targets.includes('documents')) {
     void useResumeBuilderStore.getState().loadResumes();
+    void queryClient.invalidateQueries({ queryKey: STORE_KEY });
   }
 }
 

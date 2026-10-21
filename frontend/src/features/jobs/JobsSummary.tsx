@@ -26,6 +26,7 @@ interface MakeReadyResult {
   queued: number;
   already_running: number;
   failed: number;
+  no_credits?: number;
   remaining: number;
   resume_source: 'original' | 'tailored';
   original_resume_missing: boolean;
@@ -241,8 +242,14 @@ function RunReadyButton({ scored, settings }: { scored: number; settings: UserSe
       setOpen(false);
       const parts = [`Queued ${data.queued} job${data.queued === 1 ? '' : 's'}`];
       if (data.already_running > 0) parts.push(`${data.already_running} already in progress`);
+      const noCredits = data.no_credits ?? 0;
+      if (noCredits > 0) {
+        toast.warning(
+          `Out of credits for ${noCredits} job${noCredits === 1 ? '' : 's'}. Add credits on the Plans page to prepare ${noCredits === 1 ? 'it' : 'them'}.`,
+        );
+      }
       if (data.queued === 0 && data.already_running === 0) {
-        toast.info('No scored jobs need documents right now.');
+        if (noCredits === 0) toast.info('No scored jobs need documents right now.');
       } else {
         toast.success(`${parts.join(', ')}.`, {
           description:

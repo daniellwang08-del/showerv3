@@ -6,6 +6,7 @@ from app.core.config import get_settings
 from app.core.logging import bind_logging_context, clear_logging_context, get_logger, new_request_id, set_request_id
 from app.models.schemas import ExtractionStatus
 from app.models.database import Job
+from app.services import credit_service
 from app.services.job_match_orchestrator import clear_job_match_progress
 from app.storage.database import get_session
 from app.storage.repository import JobExtractionRepository, JobRepository, JobMatchInProgressRepository
@@ -699,14 +700,17 @@ async def _after_save(
     quick_apply = bool((dedup_result or {}).get("quick_apply"))
     if action == "saved_active" and (match_data.get("should_run_phase_b") or quick_apply):
         try:
-            pool = await get_tailoring_pool()
-            await pool.enqueue_job(
-                "generate_tailored_content",
-                job_id,
-                user_id,
-                extraction_id,
-                _job_id=pipeline_job_id("tailor", job_id, user_id),
-            )
+            if not quick_apply and not await credit_service.can_prepare(job_id, user_id):
+                logger.info("tailored_content_paused_no_credits", job_id=job_id, user_id=user_id)
+            else:
+                pool = await get_tailoring_pool()
+                await pool.enqueue_job(
+                    "generate_tailored_content",
+                    job_id,
+                    user_id,
+                    extraction_id,
+                    _job_id=pipeline_job_id("tailor", job_id, user_id),
+                )
         except Exception as e:
             logger.warning(
                 "tailored_content_enqueue_from_save_failed",

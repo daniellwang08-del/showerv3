@@ -1226,7 +1226,7 @@ class CreditLedgerEntry(Base):
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     delta = Column(Integer, nullable=False)
     balance_after = Column(Integer, nullable=False)
-    # signup_bonus | package | admin_adjust
+    # signup_bonus | package | admin_adjust | job_prepare | job_prepare_refund | tailor | tailor_refund
     reason = Column(String(32), nullable=False)
     ref_id = Column(String(36), nullable=True)
     note = Column(String(300), nullable=True)

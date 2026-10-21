@@ -653,6 +653,13 @@ async def backfill_auto_prepare_for_user(
             )
             tailor_targets = list((await session.execute(tailor_stmt)).all())
 
+    if tailor_targets:
+        from app.services.credit_service import spendable_credits
+
+        budget = await spendable_credits(user_id)
+        if budget is not None:
+            tailor_targets = tailor_targets[: max(0, budget)]
+
     for idx, (job_id, extraction_id) in enumerate(analyze_targets):
         skip_phase_b = member_adds.get(job_id, not full)
         if skip_phase_b is None:

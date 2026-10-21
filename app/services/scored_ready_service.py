@@ -20,6 +20,7 @@ from app.models.database import (
     ValidJobUserApplication,
 )
 from app.models.schemas import ExtractionStatus
+from app.services import credit_service
 from app.services.job_pipeline_mode import documents_ready_clause, has_tailored_resume
 from app.storage.database import get_session
 
@@ -96,6 +97,8 @@ async def queue_scored_jobs_ready(
     already_running = 0
     queued = 0
     failed = 0
+    no_credits = 0
+    budget = await credit_service.spendable_credits(user_id)
     for job_id, extraction_id, content_status in rows[:limit]:
         if content_status in IN_FLIGHT_CONTENT:
             already_running += 1
@@ -105,6 +108,12 @@ async def queue_scored_jobs_ready(
             repo = ResumeBuildRepository(session)
             row = await repo.get(job_id, user_id)
             rebuild_only = _content_matches_mode(row, original)
+            if not rebuild_only and budget is not None:
+                if not await credit_service.preparation_is_free(job_id, user_id):
+                    if budget < credit_service.PREPARE_COST:
+                        no_credits += 1
+                        continue
+                    budget -= credit_service.PREPARE_COST
             if rebuild_only:
                 await repo.upsert(job_id, user_id, row.tailored_resume_data, row.cover_letter_data)
             else:
@@ -138,12 +147,14 @@ async def queue_scored_jobs_ready(
         queued=queued,
         already_running=already_running,
         failed=failed,
+        no_credits=no_credits,
         remaining=remaining,
     )
     return {
         "queued": queued,
         "already_running": already_running,
         "failed": failed,
+        "no_credits": no_credits,
         "remaining": remaining,
         "resume_source": "original" if original else "tailored",
         "original_resume_missing": original_missing,

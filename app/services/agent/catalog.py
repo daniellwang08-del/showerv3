@@ -530,6 +530,11 @@ async def _tailor_resume(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
             summary="Add your experience on the Profile page first, then try again.",
             error="no_profile",
         )
+    if out.get("error") == "no_credits":
+        from app.services.credit_service import NO_CREDITS_TAILOR_MESSAGE
+
+        await steps.fail()
+        return ToolResult(ok=False, summary=NO_CREDITS_TAILOR_MESSAGE, error="no_credits")
     if not out.get("is_job_posting"):
         await steps.fail()
         return ToolResult(

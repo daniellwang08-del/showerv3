@@ -22,6 +22,7 @@ from app.models.resume_ai_schemas import (
 )
 from app.models.resume_design_schemas import ContentSkill, ContentWork
 from app.models.schemas import JobDescriptionSchema
+from app.services import credit_service
 from app.prompts.resume_ai_router_prompt import (
     RESUME_AI_ROUTER_SYSTEM_PROMPT,
     build_router_user_content,
@@ -244,6 +245,47 @@ async def _run_pipeline(
     if not want_tailor:
         return out
 
+    label = " at ".join(p for p in (out["job_title"], out["company"]) if p) or None
+    try:
+        charge_id = await credit_service.charge_tailoring(user_id, note=label)
+    except credit_service.OutOfCredits:
+        return {**out, "error": "no_credits"}
+    tailored = False
+    try:
+        out = await _tailor(
+            out,
+            user_id,
+            job_text,
+            profile_text,
+            structured_job=structured_job,
+            match_result=match_result,
+            extra_instructions=extra_instructions,
+            emit=emit,
+            want_cover_letter=want_cover_letter,
+        )
+        tailored = bool(out.get("tailored"))
+    finally:
+        if not tailored:
+            try:
+                await credit_service.refund_tailoring(user_id, charge_id, note=label)
+            except Exception as e:  # noqa: BLE001 - never hide the tailoring outcome
+                logger.error("credits_tailor_refund_failed", user_id=user_id, charge_id=charge_id, error=str(e))
+    return out
+
+
+async def _tailor(
+    out: dict,
+    user_id: str,
+    job_text: str,
+    profile_text: str,
+    *,
+    structured_job: JobDescriptionSchema | None,
+    match_result: dict,
+    extra_instructions: str,
+    emit: EmitFn | None,
+    want_cover_letter: bool,
+) -> dict:
+    """Phase B for a pasted job description: evidence, then the tailored resume and cover letter."""
     structured_context = build_structured_context(structured_job)
     match_summary = str(match_result.get("summary", "") or "")
 
@@ -372,6 +414,17 @@ async def run_resume_ai_chat(
         reply = route["reply"] or f"Here's how your profile matches {role}."
         return ResumeAiChatResponse(
             reply=reply,
+            intent=intent,
+            action="analyzed",
+            job_description=job_text,
+            job_title=job_title,
+            company=company,
+            match=match,
+        )
+
+    if result.get("error") == "no_credits":
+        return ResumeAiChatResponse(
+            reply=f"Here's your match analysis. {credit_service.NO_CREDITS_TAILOR_MESSAGE}",
             intent=intent,
             action="analyzed",
             job_description=job_text,
