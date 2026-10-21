@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.models.database import InterviewEvent, InterviewProcess, Job, MailConnection, ValidJobUserApplication
+from app.services import calendar_invite
 from app.services import interview_extraction as extraction
 from app.services import mail_applications, nylas_service
 from app.storage.database import get_session
@@ -300,6 +301,7 @@ def _message_meta(raw: dict[str, Any]) -> dict[str, Any]:
         "snippet": str(raw.get("snippet") or ""),
         "date": date,
         "received_iso": _iso(date),
+        "invite": nylas_service.calendar_invite(raw),
     }
 
 
@@ -352,7 +354,8 @@ async def run_sync(user_id: str, tz_name: str | None = None) -> dict[str, Any]:
             (
                 m
                 for m in headers
-                if m["id"] not in known and extraction.is_candidate(m["subject"], m["snippet"], m["from"])
+                if m["id"] not in known
+                and extraction.is_candidate(m["subject"], m["snippet"], m["from"], invite=m["invite"] is not None)
             ),
             key=lambda m: m["date"] or datetime.min,
         )
@@ -452,6 +455,12 @@ async def _extract_chunk(
                 raise
             except nylas_service.MailError as e:
                 logger.info("interview_body_fetch_failed", error=str(e))
+            if m.get("invite"):
+                ics = await nylas_service.download_invite(grant_id, m["id"], m["invite"]["id"])
+                event = calendar_invite.parse_invite(ics)
+                if event is not None:
+                    m["invite_event"] = event
+                    m["body"] = f"{event.describe()}\n\n{m.get('body') or m.get('snippet') or ''}"
 
     await asyncio.gather(*(load_body(m) for m in chunk))
 
@@ -469,7 +478,26 @@ async def _extract_chunk(
     await asyncio.gather(*(classify(b) for b in batches))
     for m in chunk:
         m.pop("body", None)
+        event = m.pop("invite_event", None)
+        if event is not None and results.get(m["id"]):
+            apply_invite(results[m["id"]], event)
     return results
+
+
+def apply_invite(result: dict[str, Any], event: calendar_invite.Invite) -> None:
+    """The .ics is authoritative for when and where; the model may misread it."""
+    if result["kind"] in ("application_received", "rejection", "offer"):
+        return
+    if event.cancelled:
+        if result["status"] in ("scheduled", "info"):
+            result["status"] = "cancelled"
+    elif event.start and result["status"] in ("scheduled", "info", "needs_scheduling"):
+        result["status"] = "scheduled"
+    if event.start:
+        result["scheduled_at"] = event.start
+        result["duration_minutes"] = event.duration_minutes or result.get("duration_minutes")
+    if event.meeting_url and not result.get("meeting_url"):
+        result["meeting_url"] = event.meeting_url[:1000]
 
 
 async def _finish_with_error(user_id: str, message: str, *, needs_reauth: bool = False) -> None:

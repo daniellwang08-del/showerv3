@@ -70,14 +70,23 @@ _NOISE_SUBJECTS = re.compile(
     r"is hiring|apply now|top job picks|webinar|newsletter|% off|sale ends)",
     re.IGNORECASE,
 )
+# Teams and Outlook invites carry only the meeting title and a join link.
+_MEETING = re.compile(
+    r"(teams\.microsoft\.com/|microsoft teams meeting|zoom\.us/(j|my)/|meet\.google\.com/|webex\.com/|\bmeeting id\b)",
+    re.IGNORECASE,
+)
 _COMPANY_SUFFIX = re.compile(
     r"[,.]?\s+(inc|incorporated|llc|l\.l\.c|ltd|limited|corp|corporation|co|gmbh|plc|pty|s\.a|sa|ag|bv)\.?$",
     re.IGNORECASE,
 )
 
 
-def is_candidate(subject: str | None, snippet: str | None, sender: str | None) -> bool:
-    """Cheap check: could this email be about an application or interview process?"""
+def is_candidate(subject: str | None, snippet: str | None, sender: str | None, *, invite: bool = False) -> bool:
+    """Cheap check: could this email be about an application or interview process?
+
+    ``invite`` is true when the email carries a calendar invitation; with a
+    meeting link, that is enough to let the model decide.
+    """
     subject = subject or ""
     if _NOISE_SUBJECTS.search(subject):
         return False
@@ -85,8 +94,10 @@ def is_candidate(subject: str | None, snippet: str | None, sender: str | None) -
         return True
     if _NOISE_SENDERS.search(sender or ""):
         return False
+    if invite:
+        return True
     text = f"{subject}\n{snippet or ''}"
-    return bool(_SIGNALS.search(text) or _APPLIED_SIGNALS.search(text))
+    return bool(_SIGNALS.search(text) or _APPLIED_SIGNALS.search(text) or _MEETING.search(text))
 
 
 def company_key(name: str | None) -> str:
@@ -124,6 +135,8 @@ Rules:
 - kind "application_received" (status "info") is a confirmation that the candidate's application was submitted or received, including job board confirmations such as "Your application was sent to Acme". company is the employer the candidate applied to (not LinkedIn, Indeed, Workday, Greenhouse or another tool) and role is the job title applied for. When the application went through a recruiting platform or agency ("Your application through Clera"), company is the employer named in the email, not the platform. "Your application was viewed" and similar updates are kind "other". Account creation or welcome emails, email or profile verification, reminders to finish an application that was not submitted, and surveys are kind "other" unless they also say the application was received.
 - kind: the step the email is about. A request to pick a time is kind "scheduling" with status "needs_scheduling" unless the round type is clear, then use that round's kind with status "needs_scheduling".
 - status: "scheduled" when a date and time are confirmed, "needs_scheduling" when they ask for availability or a booking link, "action_required" when the candidate must do something else (complete an assessment, sign, reply), "cancelled" for cancellations, "completed" for thank-you notes after a round, otherwise "info".
+- company: when a staffing agency or recruiting firm runs the process and does not name the employer, use the agency's name (for example "Onward Search") rather than null.
+- A "Calendar invitation attached" block is the event from the email's .ics file. A meeting invite from an employer or recruiter, even one titled only with the company or role, is that round with status "scheduled" (or "cancelled" when it says so); take its time, link and organizer from the block. Personal and non-hiring meetings are relevant=false.
 - scheduled_at: only when the email states a concrete date and time. Resolve relative dates ("tomorrow") from the email's received time. If no timezone is given, use the candidate timezone provided.
 - Never invent companies, times, links or people. Use null when unsure.
 """

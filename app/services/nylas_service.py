@@ -28,7 +28,8 @@ logger = get_logger(__name__)
 
 _OAUTH_STATE_PURPOSE = "nylas_mail_oauth"
 _OAUTH_STATE_TTL = timedelta(minutes=15)
-_MESSAGE_FIELDS = "id,thread_id,subject,from,to,date,snippet"
+_MESSAGE_FIELDS = "id,thread_id,subject,from,to,date,snippet,attachments"
+MAX_INVITE_BYTES = 256 * 1024
 # Smaller pages keep each provider query under the Nylas gateway timeout.
 MAX_PAGE_SIZE = 100
 MAX_ATTEMPTS = 4
@@ -265,6 +266,35 @@ async def get_message(grant_id: str, message_id: str) -> dict[str, Any]:
     data = await _request("GET", f"/v3/grants/{grant_id}/messages/{message_id}")
     msg = data.get("data")
     return msg if isinstance(msg, dict) else {}
+
+
+def calendar_invite(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """The message's calendar invitation attachment (.ics), if it has one."""
+    for a in raw.get("attachments") or []:
+        if not isinstance(a, dict) or not a.get("id"):
+            continue
+        ctype = str(a.get("content_type") or "").lower()
+        name = str(a.get("filename") or "").lower()
+        if ctype.startswith(("text/calendar", "application/ics")) or name.endswith(".ics"):
+            return {"id": str(a["id"]), "size": int(a.get("size") or 0)}
+    return None
+
+
+async def download_invite(grant_id: str, message_id: str, attachment_id: str) -> str:
+    """Text of a calendar attachment; empty when it is missing or too large."""
+    path = f"/v3/grants/{grant_id}/attachments/{attachment_id}/download"
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            resp = await client.get(f"{_api_uri()}{path}", params={"message_id": message_id}, headers=_auth_headers())
+    except httpx.HTTPError as e:
+        logger.info("nylas_invite_download_failed", error=type(e).__name__)
+        return ""
+    if resp.status_code in (401, 403):
+        raise MailAuthError("Mail access expired or was revoked. Connect your email again.")
+    if resp.status_code >= 400 or len(resp.content) > MAX_INVITE_BYTES:
+        logger.info("nylas_invite_download_skipped", status=resp.status_code, size=len(resp.content))
+        return ""
+    return resp.content.decode("utf-8", errors="replace")
 
 
 _WS = re.compile(r"[ \t\r\f\v]+")
