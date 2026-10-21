@@ -234,6 +234,21 @@
       if (!isVisible(el)) continue;
       if (!String(el.value || "").trim()) out.push(labelFor(el));
     }
+    // Lever marks Resume/CV required only visually (no required attribute), and
+    // its location text is valid only once a dropdown pick fills the hidden
+    // selectedLocation.
+    try {
+      const resume = document.getElementById("resume-upload-input");
+      const resumeRequired = resume && resume.closest("li.application-question")?.querySelector(".application-label .required");
+      if (resumeRequired && !(resume.files && resume.files.length) && out.length < 8) out.push("Resume/CV");
+      const loc = document.getElementById("location-input");
+      const picked = document.getElementById("selected-location");
+      if (loc && picked && loc.required && String(loc.value || "").trim() && !String(picked.value || "").trim() && out.length < 8) {
+        out.push("Current location (pick from the list)");
+      }
+    } catch {
+      /* ignore */
+    }
     return out;
   }
 

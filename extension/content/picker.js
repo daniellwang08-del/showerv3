@@ -788,7 +788,7 @@
         if (!isVisible(el)) continue;
         // Never re-commit autocomplete comboboxes, ApiSetFormValue already ran
         // on option click; re-typing reopens the dropdown (Ashby failure mode).
-        if (isAutocompleteCombobox(el)) {
+        if (isAutocompleteCombobox(el) || (AF.lever && AF.lever.isAutocompleteInput && AF.lever.isAutocompleteInput(el))) {
           skippedCombobox += 1;
           continue;
         }
@@ -2384,8 +2384,12 @@
       const isLv = !!(AF.lever && AF.lever.isLeverPage && AF.lever.isLeverPage());
       if (!isLv) return false;
       runExclusive(async () => {
-        const uploaded = AF.lever && AF.lever.writeResumeFile ? AF.lever.writeResumeFile(msg.file) : false;
-        return { uploaded: uploaded ? 1 : 0 };
+        if (!AF.lever || !AF.lever.uploadResume) return { uploaded: 0, parse: "unavailable" };
+        const res = await AF.lever.uploadResume(msg.file);
+        try {
+          console.log("[autofill] Lever resume upload:", res);
+        } catch {}
+        return { ...res, uploaded: res && res.uploaded ? 1 : 0 };
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });

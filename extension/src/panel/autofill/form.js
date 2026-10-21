@@ -492,13 +492,15 @@ function findAshbyResumeControl(specs) {
   return null;
 }
 
+// Resolves once Lever's resume parse has finished and the content script has
+// restored the fields the parse overwrote. Returns the content-script report.
 async function uploadLeverResumeLast(tabId, pending) {
-  if (!pending || !pending.file || tabId == null) return false;
+  if (!pending || !pending.file || tabId == null) return { uploaded: 0 };
   try {
     const res = await tabSend(tabId, { type: "AF_LV_UPLOAD_RESUME", file: pending.file });
-    return !!(res && res.uploaded);
+    return res || { uploaded: 0 };
   } catch {
-    return false;
+    return { uploaded: 0 };
   }
 }
 
@@ -1099,16 +1101,24 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       /* ignore */
     }
   }
-  if (isLever) {
-    if (leverResumePending) {
-      setAutofill({ runStatus: "Uploading your resume…" });
-      const ok = await uploadLeverResumeLast(tabId, leverResumePending);
-      if (ok) {
-        debugLog("[autofill] Lever resume uploaded last");
-        markFileControlAttached(ctx, leverResumePending.cid);
-        await delay(1200);
-        await commitPrefilled(tabId);
-      }
+  if (isLever && leverResumePending) {
+    setAutofill({ runStatus: "Uploading your resume…" });
+    const res = await uploadLeverResumeLast(tabId, leverResumePending);
+    debugLog("[autofill] Lever resume upload:", res);
+    if (res.uploaded) {
+      markFileControlAttached(ctx, leverResumePending.cid);
+    } else {
+      const cid = leverResumePending.cid;
+      ctx.needsUser = ctx.needsUser.filter((x) => x.cid !== cid);
+      ctx.needsUser.push({
+        cid,
+        label: ctx.labelByCid[cid] || "Resume/CV",
+        reason:
+          res.parse === "too_large"
+            ? "Upload manually - Lever rejected the file as too large"
+            : "Upload manually - the resume could not be attached",
+      });
+      setAutofill({ needsUser: ctx.needsUser });
     }
   }
   if (isWorkable) {

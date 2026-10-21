@@ -70,22 +70,122 @@
     );
   }
 
+  function attachResumeFile(el, fileData) {
+    const bin = atob(fileData.base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const name = fileData.filename || "resume.pdf";
+    const file = new File([bytes], name, {
+      type: fileData.mime || (/\.docx$/i.test(name)
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/pdf"),
+    });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    el.files = dt.files;
+    // One change event: parseResume.js posts the file to /parseResume and
+    // application.js shows the filename chip. A second change would abort and
+    // restart the parse request.
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return !!(el.files && el.files.length);
+  }
+
+  // Fields parseResume.js overwrites with parsed values (or "") unless a
+  // change/paste event marked them as touched. The hidden selectedLocation has
+  // no touch listener at all, so it is always overwritten.
+  const PARSED_FIELD_SELECTOR = [
+    "input[name=org]",
+    "input[name=phone]",
+    "input[name=name]",
+    "input[name=email]",
+    "input[name=location]",
+    "input[name=selectedLocation]",
+    'input[name^="urls["]',
+    '[name^="residentialLocation["]',
+  ].join(", ");
+
+  function snapshotParsedFields(form) {
+    return [...(form || document).querySelectorAll(PARSED_FIELD_SELECTOR)]
+      .map((el) => ({ el, value: el.value || "" }))
+      .filter((s) => s.value !== "");
+  }
+
+  function restoreParsedFields(snapshot) {
+    let restored = 0;
+    for (const { el, value } of snapshot) {
+      if (!el.isConnected || el.value === value) continue;
+      setNativeValue(el, value);
+      // Location text must not get input/blur: that reopens the geocoder and
+      // its blur handler wipes the committed selection. Plain fields get a
+      // change so parseResume.js treats them as user-edited from now on.
+      if (el.type !== "hidden" && !isLocationInput(el)) {
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      restored += 1;
+    }
+    return restored;
+  }
+
+  function isShown(el) {
+    if (!el || !el.isConnected) return false;
+    try {
+      return getComputedStyle(el).display !== "none";
+    } catch {
+      return false;
+    }
+  }
+
+  // Wait for Lever's /parseResume round trip to finish. "parsed" and
+  // "unreadable" both keep the attached file for submission; "too_large" means
+  // Lever rejected it.
+  async function waitForResumeParse(timeout) {
+    const q = (sel) => document.querySelector(sel);
+    const outcome = () => {
+      if (isShown(q(".resume-upload-working"))) return null;
+      if (isShown(q(".resume-upload-oversize"))) return "too_large";
+      if (isShown(q(".resume-upload-success"))) return "parsed";
+      if (isShown(q(".resume-upload-failure"))) return "unreadable";
+      return null;
+    };
+    return (await waitUntil(outcome, timeout, 100)) || "timeout";
+  }
+
+  /** Attach the resume, let Lever parse it, then put back every value the
+   *  parse overwrote. Returns { uploaded, parse, restored, filename }. */
+  async function uploadResume(fileData, { parseTimeout = 30000 } = {}) {
+    const el = resumeInput();
+    if (!el || !fileData || !fileData.base64) return { uploaded: false, parse: "no_input" };
+    const snapshot = snapshotParsedFields(el.form);
+    // Mark our filled fields as user-edited so parseResume.js leaves them alone
+    // on its own; the restore below covers anything it still overwrites.
+    for (const { el: field } of snapshot) {
+      if (field.type !== "hidden" && !isLocationInput(field)) {
+        field.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+    let attached = false;
+    try {
+      attached = attachResumeFile(el, fileData);
+    } catch {
+      attached = false;
+    }
+    if (!attached) return { uploaded: false, parse: "attach_failed" };
+    const parse = await waitForResumeParse(parseTimeout);
+    const restored = restoreParsedFields(snapshot);
+    const file = el.files && el.files[0];
+    return {
+      uploaded: !!file && parse !== "too_large",
+      parse,
+      restored,
+      filename: file ? file.name : "",
+    };
+  }
+
   function writeResumeFile(fileData) {
     const el = resumeInput();
     if (!el || !fileData || !fileData.base64) return false;
     try {
-      const bin = atob(fileData.base64);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const file = new File([bytes], fileData.filename || "resume.pdf", {
-        type: fileData.mime || "application/pdf",
-      });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      el.files = dt.files;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
+      return attachResumeFile(el, fileData);
     } catch {
       return false;
     }
@@ -104,11 +204,36 @@
     return (field && field.querySelector(".dropdown-results")) || document.querySelector(".dropdown-results");
   }
 
+  // retrieveLocations.js renders each geocoder hit as
+  // <div class="dropdown-location" id="location-N"> inside .dropdown-results.
   function locationDropdownItems(box) {
     if (!box) return [];
-    return [...box.querySelectorAll("li, .dropdown-result, [class*='dropdown-result'], [class*='result-item']")].filter(
-      (n) => clean(n.textContent)
+    return [
+      ...box.querySelectorAll(".dropdown-location, li, .dropdown-result, [class*='result-item']"),
+    ].filter((n) => clean(n.textContent));
+  }
+
+  function isLocationInput(el) {
+    return (
+      !!el &&
+      el.tagName === "INPUT" &&
+      (el.id === "location-input" ||
+        (el.classList && el.classList.contains("location-input")) ||
+        el.getAttribute("data-qa") === "location-input")
     );
+  }
+
+  // Inputs whose value is only valid when picked from a Lever dropdown. Re-firing
+  // input/blur on them (commitPrefilled) reopens the dropdown and Lever's blur
+  // handler then clears both the text and the hidden selectedLocation.
+  function isAutocompleteInput(el) {
+    if (!el || !isLeverPage()) return false;
+    if (isLocationInput(el)) return true;
+    try {
+      return !!(el.closest && el.closest(".application-university"));
+    } catch {
+      return false;
+    }
   }
 
   function pressKey(el, key, code, keyCode) {
@@ -207,7 +332,9 @@
     // Lever requires selecting a suggestion; top result is the intended pick.
     if (!pick && opts.length) pick = opts[0];
     if (!pick) return false;
-    pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    // Lever commits on mousedown and reads event.target.id / textContent, so the
+    // event must target the .dropdown-location row itself, never a child.
+    pick.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     pick.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     try {
       pick.click();
@@ -227,16 +354,18 @@
     setNativeValue(input, "");
     fireInput(input);
     await delay(60);
-    // Progressive updates so Lever's async geocoder debounce sees typing like a
-    // human (bulk setNativeValue alone often never opens .dropdown-results).
+    // retrieveLocations.js only searches from its keydown handler (debounced
+    // 500 ms); input events merely show the dropdown container. Send a keydown
+    // per character, like a person typing, so /searchLocations actually runs.
     let built = "";
     for (const ch of String(text)) {
       built += ch;
+      input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: ch }));
       setNativeValue(input, built);
       fireInput(input);
+      input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: ch }));
       await delay(20);
     }
-    input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   async function writeLocationInput(input, value) {
@@ -246,27 +375,24 @@
     for (const text of queries) {
       await typeLocationQuery(input, text);
 
-      const items = await waitForLocationDropdown(input, 3000);
+      // Geocoder answers after the 500 ms debounce plus a network round trip.
+      const items = await waitForLocationDropdown(input, 6000);
       if (!items || !items.length) continue;
 
-      // Primary commit: Enter selects the top/highlighted geocoder result.
-      pressKey(input, "Enter", "Enter", 13);
-      if (await waitLocationCommitted(input, 1400)) {
-        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-        return true;
-      }
-
-      // Some Lever builds need ArrowDown to highlight before Enter commits.
-      pressKey(input, "ArrowDown", "ArrowDown", 40);
-      await delay(80);
-      pressKey(input, "Enter", "Enter", 13);
-      if (await waitLocationCommitted(input, 1200)) {
-        input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-        return true;
-      }
-
-      // Click fallback on the matching / top dropdown row.
+      // Primary commit: mousedown on the matching (or top) row, Lever's own
+      // click path. A bare Enter with nothing highlighted would blank the input.
       if (await pickAutocompleteOption(input, text)) {
+        if (await waitLocationCommitted(input, 1200)) {
+          input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+          return true;
+        }
+      }
+
+      // Keyboard fallback: highlight the first row, then Enter.
+      if (locationDropdownItems(locationDropdownBox(input)).length) {
+        pressKey(input, "ArrowDown", "ArrowDown", 40);
+        await delay(80);
+        pressKey(input, "Enter", "Enter", 13);
         if (await waitLocationCommitted(input, 1200)) {
           input.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
           return true;
@@ -408,6 +534,9 @@
     shouldSkipSubtree,
     resumeInput,
     writeResumeFile,
+    uploadResume,
+    isAutocompleteInput,
+    writeLocationInput,
     pronounsExtraOptions,
     writePronounsCustom,
     isPronounsGroup,
