@@ -578,6 +578,41 @@
     return c;
   }
 
+  // Bot traps ("honeypots"): fields a person never sees or is told to leave
+  // empty. Filling one flags the application as automated, so they are never
+  // claimed. Labels like "Leave blank if none" are ordinary fields; a blank
+  // instruction only counts when it is addressed to humans or bots.
+  const HONEYPOT_NAME = /honey.?pot|hpot|bot.?(trap|check|field)|gotcha|no.?spam|anti.?spam|ak_hp|^hp[_-]|[_-]hp$|leave.?(this.?)?(blank|empty)|do.?not.?fill/i;
+  const HONEYPOT_BLANK =
+    /\b(leave|keep|left)\b.{0,40}\b(blank|empty|unchecked)\b|\bdo ?n[o']?t\b.{0,30}\b(fill|enter|type|complete|answer|check|touch|change)\b|\b(should|must) (be )?(left )?(blank|empty)\b/i;
+  const HONEYPOT_AUDIENCE =
+    /\bif you('re| are) (a |an )?(human|real person|person|bot|robot)\b|\bhumans?\b.{0,20}\b(should|must|do ?n[o']?t|leave|ignore)\b|\b(robots?|bots?|spam ?bots?) only\b|\bfor (robots?|bots?|spam ?bots?)\b|\b(anti-?spam|spam (trap|protection|check|prevention)|bot (trap|protection|check))\b/i;
+
+  function honeypotText(text) {
+    const t = clean(text);
+    if (!t || t.length > 400) return false;
+    return HONEYPOT_BLANK.test(t) && HONEYPOT_AUDIENCE.test(t);
+  }
+
+  function isHoneypot(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const t = (el.type || "").toLowerCase();
+    if (t === "file") return false;
+    try {
+      const idents = [el.name, el.id, ...(typeof el.className === "string" ? el.className.split(/\s+/) : [])];
+      if (idents.some((s) => s && HONEYPOT_NAME.test(s))) return true;
+      // Pushed off the page (left:-9999px).
+      const r = el.getBoundingClientRect();
+      if (r.right + window.scrollX < -100 || r.bottom + window.scrollY < -100) return true;
+      const label = [labelForControl(el), el.getAttribute("placeholder"), el.getAttribute("aria-label"), el.getAttribute("title")].join(" ");
+      if (honeypotText(label)) return true;
+      // The instruction often sits beside the field rather than in its label.
+      const box = el.closest("label, .form-group, .field, [class*='field'], [class*='question'], li, p, div");
+      if (box && box.querySelectorAll("input, textarea, select").length <= 2 && honeypotText(box.innerText || box.textContent)) return true;
+    } catch {}
+    return false;
+  }
+
   // Intentionally a no-op: we used to flash a green outline on each filled field,
   // but that "robot filled this" indicator hurts the real-user feel during
   // autofill. Kept (and still called) so callers don't need to change.
@@ -599,7 +634,7 @@
   // lists (<ul data-af-options-for>). This is the DOM-with-options payload.
   const _CLEAN_REMOVE_SEL = [
     "script", "style", "svg", "noscript", "link", "iframe", "img", "path", "br", "hr", "button",
-    '[aria-hidden="true"]', '[class*="a11yText"]', '[class*="requiredInput"]',
+    '[aria-hidden="true"]', '[class*="a11yText"]', '[class*="requiredInput"]', "[data-af-honeypot]",
     ".iti__dropdown-content", ".iti__country-list", ".iti__flag", ".iti__arrow", ".iti__selected-country",
     ".apply-field-extra", ".apply-buttons",
   ].join(",");
@@ -666,5 +701,7 @@
     diag,
     cleanForLLM,
     buildOptionList,
+    isHoneypot,
+    honeypotText,
   };
 })();

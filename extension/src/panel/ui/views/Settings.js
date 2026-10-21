@@ -173,8 +173,8 @@ export function SettingsView({ s }) {
   const toggleAutoSubmit = async (on) => {
     if (on) {
       const ok = await confirm({
-        title: "Submit Workday applications for you?",
-        message: "When autofill reaches the Review step, NAO clicks Submit without waiting for you. Leave this off to review every application yourself.",
+        title: "Submit Workday and JobDiva applications for you?",
+        message: "When autofill reaches Workday's Review step or finishes a JobDiva Quick Apply, NAO clicks Submit without waiting for you. Leave this off to review every application yourself.",
         confirmLabel: "Turn on auto-submit",
         tone: "danger",
       });
@@ -226,10 +226,9 @@ export function SettingsView({ s }) {
           onChange=${(on) => savePreference("autoAdvance", on)}
         />
         <${Toggle}
-          label="Submit on Workday Review"
-          hint="Off means you always press Submit yourself."
+          label="Submit Workday and JobDiva applications"
+          hint="Off means you always press Submit yourself. Auto-apply follows its own dry run setting."
           checked=${s.autoSubmit}
-          disabled=${!s.autoAdvance}
           onChange=${toggleAutoSubmit}
         />
         <label class="field">

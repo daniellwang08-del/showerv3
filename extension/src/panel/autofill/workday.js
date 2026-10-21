@@ -14,6 +14,7 @@ import {
   delay,
   downloadApplicationResume,
   getAutofillProfile,
+  submitAllowed,
   tabBroadcast,
   tabSend,
 } from "./shared.js";
@@ -514,14 +515,14 @@ async function autoAdvanceWorkday(tabId, profile, resumeFile) {
     WD_MAX_STEPS,
     WD_MAX_STEP_FILLS,
     WD_MAX_SAVE_ATTEMPTS,
-    autoSubmit: !!state.autoSubmit,
+    autoSubmit: submitAllowed(),
   });
 
-  // Reached the Review step. If the user enabled auto-submit (Workday only),
+  // Reached the Review step. If submitting is allowed (see submitAllowed),
   // click the final Submit and confirm the thank-you page; otherwise stop at
   // Review so the user submits manually. Always ends the loop.
   const finishAtReview = async () => {
-    if (!state.autoSubmit) return finishLoop("review");
+    if (!submitAllowed()) return finishLoop("review");
     if (loopStopped()) return finishLoop("stopped");
     setAutofill({ loopStatus: "Submitting application…" });
     aaLog("phase: AUTO-SUBMIT, clicking Submit on Review", {});

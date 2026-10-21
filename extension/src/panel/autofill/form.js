@@ -36,6 +36,7 @@ import {
   debugLog,
   delay,
   focusGate,
+  submitAllowed,
   tabBroadcast,
   tabSend,
 } from "./shared.js";
@@ -1469,12 +1470,13 @@ async function runAutofillPass() {
       return s !== "filled" && s !== "attached";
     });
 
-    // JobDiva: auto-submit then Complete & Next. Other engines never auto-submit;
-    // JobDiva Quick Apply is intentionally one-shot. Do this while running is
-    // still true so submit-watch's APP_SUBMITTED cannot race completeJob.
+    // JobDiva: submit then Complete & Next, when submitting is allowed (auto-apply
+    // live mode for this site, or the panel's Auto-submit). Otherwise the filled
+    // form waits for the user. Done while running is still true so
+    // submit-watch's APP_SUBMITTED cannot race completeJob.
     if (eng && eng.platform === "jobdiva" && lastSpecs.length) {
-      if (ctx.needsUser && ctx.needsUser.length) {
-        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: ctx.needsUser });
+      if ((ctx.needsUser && ctx.needsUser.length) || !submitAllowed()) {
+        setAutofill({ running: false, runStatus: null, specs: lastSpecs, needsUser: ctx.needsUser || [] });
         return;
       }
       setAutofill({ runStatus: "Submitting your application…" });

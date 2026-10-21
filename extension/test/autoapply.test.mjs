@@ -50,4 +50,6 @@ test("listing URLs map to the application form", () => {
   assert.equal(applyPageUrl("workable", "https://apply.workable.com/acme/j/ABC123/"), "https://apply.workable.com/acme/j/ABC123/apply/");
   assert.equal(applyPageUrl("breezy", "https://acme.breezy.hr/p/abc-engineer"), "https://acme.breezy.hr/p/abc-engineer/apply");
   assert.equal(applyPageUrl("greenhouse", "https://boards.greenhouse.io/acme/jobs/1"), "https://boards.greenhouse.io/acme/jobs/1");
+  assert.equal(applyPageUrl("manatal", "https://www.careers-page.com/24-mag/job/V6768V8R"), "https://www.careers-page.com/24-mag/job/V6768V8R/apply");
+  assert.equal(applyPageUrl("manatal", "https://www.careers-page.com/24-mag/job/V6768V8R/apply"), "https://www.careers-page.com/24-mag/job/V6768V8R/apply");
 });

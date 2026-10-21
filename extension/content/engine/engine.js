@@ -194,6 +194,14 @@
         if (AF.jobdiva && AF.jobdiva.shouldSkipControl && AF.jobdiva.shouldSkipControl(anchor)) continue;
         if (anchor.closest && AF.workable && anchor.closest('[data-ui="education"], [data-ui="experience"], [data-ui="autofill-button"]')) continue;
       } catch {}
+      if (AF.dom.isHoneypot(anchor)) {
+        consumed.add(anchor);
+        try {
+          anchor.setAttribute("data-af-honeypot", "1");
+        } catch {}
+        diag("skip bot trap", anchor.name || anchor.id || "");
+        continue;
+      }
       // Skip hidden helper inputs - EXCEPT file inputs, which are almost always
       // hidden behind a styled drop zone (RecruiterFlow's #fileInput is permanently
       // display:none) yet must still be claimed so the resume can be attached.

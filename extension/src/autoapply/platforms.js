@@ -102,6 +102,8 @@ export function applyPageUrl(platform, url) {
     u.pathname = `/${parts.join("/")}/apply/`;
   } else if (platform === "breezy" && parts.length === 2 && parts[0] === "p") {
     u.pathname = `/p/${parts[1]}/apply`;
+  } else if (platform === "manatal" && parts.length === 3 && parts[1] === "job") {
+    u.pathname = `/${parts.join("/")}/apply`;
   } else {
     return url;
   }

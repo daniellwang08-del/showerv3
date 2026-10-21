@@ -7,7 +7,7 @@ import { CLOSED_UNSUBMITTED, closedWithoutSubmit } from "../src/autoapply/model.
 const RULES = { applyText: APPLY_TEXT, notApplyText: NOT_APPLY_TEXT, applyAttr: APPLY_ATTR, minFields: MIN_FORM_FIELDS };
 
 test("apply button text", () => {
-  for (const t of ["Apply now", "APPLY", "Apply for this job", "Apply to this position", "Start application", "I'm interested"]) {
+  for (const t of ["Apply now", "APPLY", "Apply for this job", "Apply to this position", "Start application", "I'm interested", "Apply for Position"]) {
     assert.ok(isApplyText(t), t);
   }
   for (const t of ["Apply with LinkedIn", "Submit application", "Share job", "Applying tips", "Sign in to apply", ""]) {
@@ -66,6 +66,14 @@ test("a Workable listing: clicks Apply now", () => {
   assert.deepEqual({ ready: out.ready, clicked: out.clicked, label: out.label }, { ready: false, clicked: true, label: "apply now" });
   assert.equal(apply.clicks, 1);
   assert.equal(share.clicks, 0);
+});
+
+test("a careers-page.com (Manatal) listing: clicks Apply for Position", () => {
+  const top = el("button", { text: "Apply for Position", attrs: { class: "btn btn-lg btn-outline-light" } });
+  page({ controls: [top], href: "https://www.careers-page.com/24-mag/job/V6768V8R" });
+  const out = probeApplyPage(RULES, true);
+  assert.equal(out.clicked, true);
+  assert.equal(top.clicks, 1);
 });
 
 test("an application form is ready and nothing is clicked", () => {

@@ -171,7 +171,7 @@ async function fill(tab) {
   const af = await waitForFill();
   if (af.error) throw needsYou(af.error);
   const needs = (af.needsUser || []).map((n) => `${n.label}: ${n.reason}`);
-  return { filled: (af.specs || []).length, needs };
+  return { filled: (af.specs || []).length, needs, submitted: af.submitted === true };
 }
 
 // ── submit, confirm, code ───────────────────────────────────────────────────
@@ -347,12 +347,24 @@ async function run(cfg) {
   if (NEEDS_ACCOUNT.has(platform)) throw needsYou(`${platform} needs an account. Sign in and finish the application.`);
 
   job.engine = resolveEngine({ snapshot: job.snapshot, pageUrl: tab.url });
-  setState({ job });
+  // Engines that submit on their own (JobDiva) may only do so in live mode on sites allowed to submit.
+  const maySubmit = !cfg.dryRun && cfg.submitPlatforms.includes(platform);
+  setState({ job, autoApplySubmit: maySubmit });
 
   step("Filling the application…");
   const result = await fill(tab);
   report({ filled: result.filled });
   if (result.needs.length) throw needsYou("Needs your input: " + result.needs.slice(0, 4).join("; "));
+  if (result.submitted) {
+    report({ submittedAt: Date.now() });
+    step("Marking applied…");
+    await api.markApplied([jobId]);
+    await api.updateSession(jobId, "completed").catch(() => {});
+    return {
+      status: "applied",
+      message: maySubmit ? "Submitted and confirmed (site)." : "The site submitted the application on its own.",
+    };
+  }
 
   await delay(1500);
   const check = await pageState(tab.id);

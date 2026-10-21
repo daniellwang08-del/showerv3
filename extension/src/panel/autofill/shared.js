@@ -20,6 +20,15 @@ export function focusGate() {
   return focusGateFn;
 }
 
+/**
+ * Whether an engine that can press the final Submit itself (JobDiva, Workday)
+ * may do so. Auto-apply decides per run (dry run, sites allowed to submit);
+ * the panel's own Auto-submit preference never applies there.
+ */
+export function submitAllowed() {
+  return state.autoApply ? state.autoApplySubmit === true : state.autoSubmit === true;
+}
+
 // Autofill payloads contain profile data, so tracing is opt-in:
 // run `localStorage.naoDebug = "1"` in the panel console to enable it.
 const DEBUG = (() => {
