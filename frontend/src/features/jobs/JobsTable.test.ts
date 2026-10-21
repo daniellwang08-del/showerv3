@@ -22,7 +22,7 @@ describe('columnsFor', () => {
     const cols = columnsFor('full');
     expect(cols.find((c) => c.id === 'title')?.width).toBe('minmax(12rem, 1.4fr)');
     expect(cols.find((c) => c.id === 'location')?.width).toBe('minmax(10rem, 1.3fr)');
-    expect(cols.find((c) => c.id === 'source')?.width).toBe('7.5rem');
+    expect(cols.find((c) => c.id === 'source')?.width).toBe('5.5rem');
     expect(cols.find((c) => c.id === 'source')?.header).toBe('Reporter');
     expect(cols.find((c) => c.id === 'status')?.width).toBe('minmax(9.5rem, 1fr)');
     expect(cols.find((c) => c.id === 'mode')?.width).toBe('5.5rem');

@@ -9,6 +9,7 @@ import {
   jobStage,
   relativeTime,
   reporterName,
+  shortReporter,
   sourceLabel,
   sourceOrigin,
   workMode,
@@ -104,10 +105,22 @@ describe('formatting helpers', () => {
     expect(reporterName(makeJob({ source: 'linkedin' }))).toBe('LinkedIn');
   });
 
+  it('shortens reporters to their first word, at most 4 characters', () => {
+    expect(shortReporter('You')).toBe('You');
+    expect(shortReporter('Raoyin Chen')).toBe('Raoy');
+    expect(shortReporter('Team')).toBe('Team');
+    expect(shortReporter('RemoteRocketship')).toBe('Remo');
+    expect(shortReporter('Career page')).toBe('Care');
+    expect(shortReporter('  ')).toBe('-');
+    const teammate = sourceOrigin(makeJob({ added_from: 'manual', from_me: false, added_by_name: 'Raoyin' }));
+    expect(teammate).toMatchObject({ short: 'Raoy', icon: 'users', label: 'Added by Raoyin' });
+  });
+
   it('resolves icon origins for the Reporter column', () => {
     expect(sourceOrigin(makeJob({ source: 'linkedin' }))).toEqual({
       label: 'LinkedIn',
       name: 'LinkedIn',
+      short: 'Link',
       logoSrc: '/integrations/job-sites/linkedin.svg',
       icon: 'globe',
     });

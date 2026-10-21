@@ -70,7 +70,7 @@ export const JOB_COLUMNS: Column[] = [
   { id: 'title', header: 'Role', width: 'minmax(12rem, 1.4fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
   { id: 'location', header: 'Location', width: 'minmax(10rem, 1.3fr)', compactWidth: 'minmax(5rem, 1fr)', sortField: 'location', tiers: ALL },
   { id: 'mode', header: 'Mode', width: '5.5rem', tiers: FULL },
-  { id: 'source', header: 'Reporter', width: '7.5rem', tiers: WIDE },
+  { id: 'source', header: 'Reporter', width: '5.5rem', tiers: WIDE },
   { id: 'added', header: 'Added', width: '4.5rem', sortField: 'created_at', tiers: WIDE, align: 'end' },
   { id: 'match', header: 'Match', width: '7.5rem', compactWidth: '4.75rem', sortField: 'match_score', tiers: ALL },
   { id: 'docs', header: 'Docs', width: '5rem', tiers: WIDE },
@@ -646,8 +646,8 @@ function SourceOriginCell({ job }: { job: DashboardJob }) {
             <FallbackIcon className="size-3.5 text-muted-foreground" aria-hidden />
           )}
         </span>
-        <span className={cn('truncate text-xs', job.from_me ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-          {origin.name}
+        <span className={cn('text-xs whitespace-nowrap', job.from_me ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+          {origin.short}
         </span>
       </TooltipTrigger>
       <TooltipContent>{origin.label}</TooltipContent>

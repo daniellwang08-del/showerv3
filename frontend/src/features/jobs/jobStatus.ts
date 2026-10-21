@@ -172,8 +172,10 @@ export type SourceOriginIcon = 'user' | 'users' | 'career' | 'globe';
 export type SourceOrigin = {
   /** Short tooltip / accessible name. */
   label: string;
-  /** Who reported the job, as the Reporter column shows it ("You", "Raoyin", "Team", "LinkedIn"). */
+  /** Who reported the job ("You", "Raoyin", "Team", "LinkedIn"). */
   name: string;
+  /** ``name`` cut to fit the Reporter column: first word, at most 4 characters ("Raoy", "Link"). */
+  short: string;
   /** Job-site logo under /public/integrations/job-sites when available. */
   logoSrc?: string;
   /** Fallback Lucide glyph when there is no logo. */
@@ -211,23 +213,30 @@ export function reporterName(job: DashboardJob): string {
   return sourceLabel(job);
 }
 
+/** A reporter name cut for the table: first word, at most 4 characters. */
+export function shortReporter(name: string): string {
+  const word = name.trim().split(/[\s.@_-]+/)[0] ?? '';
+  return [...word].slice(0, 4).join('') || '-';
+}
+
 /** Icon-first origin for the jobs table (logo when we have one, else a simple glyph). */
 export function sourceOrigin(job: DashboardJob): SourceOrigin {
   const label = sourceLabel(job);
   const name = reporterName(job);
-  if (job.from_me) return { label, name, icon: 'user' };
-  if (job.added_from === 'manual' || job.added_from === 'admin_manual') return { label, name, icon: 'users' };
+  const origin = (o: Omit<SourceOrigin, 'short'>): SourceOrigin => ({ ...o, short: shortReporter(o.name) });
+  if (job.from_me) return origin({ label, name, icon: 'user' });
+  if (job.added_from === 'manual' || job.added_from === 'admin_manual') return origin({ label, name, icon: 'users' });
 
   const slug = normalizeSourceSlug(job.source) || normalizeSourceSlug(job.added_from);
   if (slug && JOB_SITE_LOGO_SLUGS.has(slug)) {
-    return { label, name, logoSrc: `/integrations/job-sites/${slug}.svg`, icon: 'globe' };
+    return origin({ label, name, logoSrc: `/integrations/job-sites/${slug}.svg`, icon: 'globe' });
   }
   // ATS / company career boards (Greenhouse, Lever, Ashby, …) or bare domains.
   if (isCareerPageHost(job.domain, job.source_url) || slug === 'greenhouse' || slug === 'lever' || slug === 'ashby') {
     const careerLabel = label === '-' ? 'Career page' : label;
-    return { label: careerLabel, name: careerLabel, icon: 'career' };
+    return origin({ label: careerLabel, name: careerLabel, icon: 'career' });
   }
-  return { label, name, icon: 'globe' };
+  return origin({ label, name, icon: 'globe' });
 }
 
 export function relativeTime(dateStr: string | null | undefined, now = Date.now()): string {
