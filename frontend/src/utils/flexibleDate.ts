@@ -166,23 +166,48 @@ export function coerceFlexibleDate(raw: string | null | undefined): string {
   return findDateInText(v) ?? '';
 }
 
-export function formatFlexibleDate(raw: string | null | undefined, empty = ''): string {
+export type DateFormat = 'mon_yyyy' | 'month_yyyy' | 'mm_yyyy' | 'yyyy';
+
+/** How resume dates print; mirrors `DateStyle` in app/utils/flexible_date.py. */
+export interface DateStyle {
+  format: DateFormat;
+  present: string;
+}
+
+export const DEFAULT_DATE_STYLE: DateStyle = { format: 'mon_yyyy', present: 'Present' };
+
+const MONTH_FULL_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+export function formatFlexibleDate(
+  raw: string | null | undefined,
+  empty = '',
+  style: DateStyle = DEFAULT_DATE_STYLE,
+): string {
   const v = (raw ?? '').trim();
   if (!v) return empty;
-  if (/^present$/i.test(v)) return 'Present';
+  if (/^(present|current|now|ongoing)$/i.test(v)) return style.present;
   const parsed = parseFlexibleDate(v);
   if (!parsed) return v;
-  if (parsed.precision === 'year') return String(parsed.year);
-  const mon = MONTH_NAMES[(parsed.month ?? 1) - 1];
+  if (parsed.precision === 'year' || style.format === 'yyyy') return String(parsed.year);
+  const month = parsed.month ?? 1;
+  if (style.format === 'mm_yyyy') return `${String(month).padStart(2, '0')}/${parsed.year}`;
+  const mon = (style.format === 'month_yyyy' ? MONTH_FULL_NAMES : MONTH_NAMES)[month - 1];
   if (parsed.precision === 'month') return `${mon} ${parsed.year}`;
   return `${mon} ${parsed.day}, ${parsed.year}`;
 }
 
-export function formatFlexiblePeriod(start?: string | null, end?: string | null): string {
-  const s = formatFlexibleDate(start);
-  const e = formatFlexibleDate(end);
-  if (s && e) return `${s} - ${e}`;
-  if (s) return `${s} - Present`;
+export function formatFlexiblePeriod(
+  start?: string | null,
+  end?: string | null,
+  style: DateStyle = DEFAULT_DATE_STYLE,
+): string {
+  const s = formatFlexibleDate(start, '', style);
+  const e = formatFlexibleDate(end, '', style);
+  if (s && e) return s === e && style.format === 'yyyy' ? s : `${s} - ${e}`;
+  if (s) return `${s} - ${style.present}`;
   return e || '';
 }
 

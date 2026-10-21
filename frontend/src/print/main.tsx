@@ -56,7 +56,11 @@ window.renderResume = async (payload) => {
   }
   pageStyle.textContent = `@page { size: ${paper.css}; margin: 0; } html, body { margin: 0; padding: 0; background: #ffffff; }`;
 
-  const fontsLoaded = await loadFaces(design.typography.font_family);
+  const headingFamily = design.typography.heading_font_family;
+  const [fontsLoaded] = await Promise.all([
+    loadFaces(design.typography.font_family),
+    headingFamily && headingFamily !== design.typography.font_family ? loadFaces(headingFamily) : Promise.resolve(true),
+  ]);
   await decodeImage(design.layout.header_background === 'image' ? design.layout.header_image?.data_url : undefined);
   await decodeImage(!letter && design.layout.photo?.enabled ? design.layout.photo.data_url : undefined);
 

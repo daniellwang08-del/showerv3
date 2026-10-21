@@ -1,7 +1,7 @@
-import { FileText, Heading, MoveVertical, Type } from 'lucide-react';
+import { FileText, MoveVertical, Type } from 'lucide-react';
 import type { EducationStyle, ExperienceStyle, LayoutConfig, ResumeDesign, Typography } from '../../types/resumeDesign';
 import { DEFAULT_EDUCATION_STYLE, DEFAULT_EXPERIENCE_STYLE, marginSides } from '../../types/resumeDesign';
-import { BoxSidesField, ControlCard, Segmented, Slider, Toggle } from './controls';
+import { BoxSidesField, ControlCard, Segmented, Slider } from './controls';
 
 type Density = 'compact' | 'balanced' | 'relaxed';
 
@@ -102,21 +102,6 @@ export function FormatControls({
           format={(v) => v.toFixed(2)} onChange={(v) => onTypography({ line_spacing: v })} />
         <Slider label="Name size" value={t.name_scale} min={1.4} max={3.5} step={0.1}
           format={(v) => `${v.toFixed(1)}\u00d7 body`} onChange={(v) => onTypography({ name_scale: v })} />
-      </ControlCard>
-
-      <ControlCard icon={Heading} title="Section headings">
-        <Segmented<'upper' | 'title'>
-          label="Case"
-          value={t.uppercase_headings ? 'upper' : 'title'}
-          options={[
-            { value: 'upper', label: 'UPPERCASE' },
-            { value: 'title', label: 'Title Case' },
-          ]}
-          onChange={(v) => onTypography({ uppercase_headings: v === 'upper' })}
-        />
-        <Slider label="Heading size" value={t.heading_scale} min={1} max={2.2} step={0.05}
-          format={(v) => `${v.toFixed(2)}\u00d7 body`} onChange={(v) => onTypography({ heading_scale: v })} />
-        <Toggle label="Accent line under headings" checked={l.accent_rule} onChange={(v) => onLayout({ accent_rule: v })} />
       </ControlCard>
 
       <ControlCard icon={MoveVertical} title="Spacing">

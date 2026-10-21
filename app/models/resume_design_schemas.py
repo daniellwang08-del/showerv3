@@ -51,7 +51,22 @@ CertificatesLayout = Literal["list", "inline", "pipe", "chips", "grid"]
 CertificatesMarker = Literal["dot", "dash", "check", "arrow", "square", "none"]
 CertificatesSurface = Literal["none", "tint", "card"]
 
+HeadingStyle = Literal["plain", "underline", "overline", "double", "left_bar", "tint", "solid", "boxed"]
+HeadingAlign = Literal["left", "center"]
+DateFormat = Literal["mon_yyyy", "month_yyyy", "mm_yyyy", "yyyy"]
+
+ExtraSectionKind = Literal["projects", "languages", "awards", "volunteering", "publications", "interests", "custom"]
+ExtraSectionLayout = Literal["entries", "list", "inline", "columns"]
+
 DEFAULT_SECTION_ORDER: list[str] = ["summary", "skills", "experience", "education", "certificates"]
+CORE_SECTION_TITLES: dict[str, str] = {
+    "summary": "Professional Summary",
+    "skills": "Technical Skills",
+    "experience": "Work Experience",
+    "education": "Education",
+    "certificates": "Certifications",
+}
+_EXTRA_ID = re.compile(r"^x-[a-z0-9]{4,24}$")
 SIDEBAR_SECTIONS: list[str] = ["skills", "education", "certificates"]
 
 
@@ -62,6 +77,10 @@ class Typography(BaseModel):
     name_scale: float = Field(default=2.0, ge=1.4, le=3.5)
     line_spacing: float = Field(default=1.12, ge=1.0, le=2.0)
     uppercase_headings: bool = True
+    # Optional pairing: section headings in a second face. None keeps the body font.
+    heading_font_family: str | None = None
+    # Heading letter spacing in em. None keeps the legacy 0.04em for caps, 0 otherwise.
+    heading_tracking_em: float | None = Field(default=None, ge=0.0, le=0.3)
 
 
 class Colors(BaseModel):
@@ -206,6 +225,9 @@ class LayoutConfig(BaseModel):
     contact_icon_offset_x_pt: float = Field(default=0.0, ge=-6.0, le=6.0)
     contact_icon_offset_y_pt: float = Field(default=0.0, ge=-6.0, le=6.0)
     accent_rule: bool = True
+    # None derives from ``accent_rule`` (underline or plain) so older designs keep their look.
+    heading_style: HeadingStyle | None = None
+    heading_align: HeadingAlign = "left"
     section_order: list[str] = Field(default_factory=lambda: list(DEFAULT_SECTION_ORDER))
     hidden_sections: list[str] = Field(default_factory=list)
 
@@ -242,6 +264,12 @@ class LayoutConfig(BaseModel):
     @property
     def hp_right(self) -> float:
         return self.header_pad_right_pt if self.header_pad_right_pt is not None else self.m_right
+
+    @property
+    def effective_heading_style(self) -> str:
+        if self.heading_style is not None:
+            return self.heading_style
+        return "underline" if self.accent_rule else "plain"
 
 
 class SummaryStyle(BaseModel):
@@ -350,6 +378,25 @@ class SectionOptions(BaseModel):
     experience_style: ExperienceStyle = Field(default_factory=ExperienceStyle)
     education_style: EducationStyle = Field(default_factory=EducationStyle)
     certificates_style: CertificatesStyle = Field(default_factory=CertificatesStyle)
+    # Renamed headings, keyed by section id ("experience" -> "Professional Experience").
+    titles: dict[str, str] = Field(default_factory=dict)
+    date_format: DateFormat = "mon_yyyy"
+    present_label: str = Field(default="Present", max_length=20)
+
+    @field_validator("titles")
+    @classmethod
+    def _clean_titles(cls, v: dict[str, str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for key, title in list(v.items())[:40]:
+            text = " ".join(str(title or "").split())[:60]
+            if text:
+                out[str(key)[:40]] = text
+        return out
+
+    @field_validator("present_label")
+    @classmethod
+    def _clean_present(cls, v: str) -> str:
+        return " ".join(v.split()) or "Present"
 
 
 class ContentSkill(BaseModel):
@@ -414,6 +461,68 @@ class ResumeContent(BaseModel):
     certificates: list[ContentCertificate] = Field(default_factory=list)
 
 
+class ExtraItem(BaseModel):
+    """One entry of an extra section. Fields a layout doesn't use are simply ignored."""
+
+    title: str = Field(default="", max_length=200)
+    subtitle: str = Field(default="", max_length=200)
+    date_start: str = Field(default="", max_length=40)
+    date_end: str = Field(default="", max_length=40)
+    location: str = Field(default="", max_length=120)
+    url: str = Field(default="", max_length=500)
+    bullets: list[str] = Field(default_factory=list, max_length=12)
+
+    @field_validator("bullets")
+    @classmethod
+    def _clean_bullets(cls, v: list[str]) -> list[str]:
+        return [str(b).strip()[:600] for b in v if str(b).strip()]
+
+
+class ExtraSection(BaseModel):
+    """A section beyond the core five: projects, languages, awards and so on.
+
+    Lives on the design (not ``content``) so per-job tailored builds keep it."""
+
+    id: str
+    kind: ExtraSectionKind = "custom"
+    title: str = Field(default="", max_length=60)
+    layout: ExtraSectionLayout = "entries"
+    items: list[ExtraItem] = Field(default_factory=list, max_length=40)
+
+    @field_validator("id")
+    @classmethod
+    def _valid_id(cls, v: str) -> str:
+        if not _EXTRA_ID.match(v):
+            raise ValueError("Extra section ids look like 'x-ab12cd'.")
+        return v
+
+    @property
+    def display_title(self) -> str:
+        return self.title.strip() or EXTRA_KIND_TITLES.get(self.kind, "Additional")
+
+
+def section_title(design: "ResumeDesign", section_id: str) -> str:
+    """Heading text for *section_id*: the user's rename, else the section's own title."""
+    custom = (design.sections.titles or {}).get(section_id)
+    if custom:
+        return custom
+    for extra in design.extra_sections:
+        if extra.id == section_id:
+            return extra.display_title
+    return CORE_SECTION_TITLES.get(section_id, section_id)
+
+
+EXTRA_KIND_TITLES: dict[str, str] = {
+    "projects": "Projects",
+    "languages": "Languages",
+    "awards": "Awards & Honors",
+    "volunteering": "Volunteering",
+    "publications": "Publications",
+    "interests": "Interests",
+    "custom": "Additional",
+}
+
+
 class ResumeDesign(BaseModel):
     theme_id: str = "classic"
     typography: Typography = Field(default_factory=Typography)
@@ -422,6 +531,10 @@ class ResumeDesign(BaseModel):
     sections: SectionOptions = Field(default_factory=SectionOptions)
     # Optional manual content override authored in the builder's Content panel.
     content: ResumeContent | None = None
+    extra_sections: list[ExtraSection] = Field(default_factory=list, max_length=12)
+
+
+ThemeCategory = Literal["classic", "modern", "technical", "executive", "minimal"]
 
 
 class ThemePreset(BaseModel):
@@ -430,6 +543,7 @@ class ThemePreset(BaseModel):
     description: str
     accent_swatch: str
     design: ResumeDesign
+    category: ThemeCategory = "classic"
     is_custom: bool = False
     is_loved: bool = False
 

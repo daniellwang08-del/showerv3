@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, Heart, Palette, Trash2 } from 'lucide-react';
-import type { ResumeDesign, ThemePreset } from '../../types/resumeDesign';
+import type { ResumeDesign, ThemeCategory, ThemePreset } from '../../types/resumeDesign';
 import type { UserProfile } from '../../types/profile';
 import { ControlCard } from './controls';
 import { ResumePreview } from './ResumePreview';
@@ -9,6 +9,24 @@ import { effectiveProfile } from '../../utils/resumeContent';
 import { themeDesignFor, useResumeBuilderStore } from '../../stores/resumeBuilderStore';
 
 const PAGE_SIZE = 6;
+
+type Filter = 'all' | ThemeCategory | 'mine';
+
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'classic', label: 'Classic' },
+  { id: 'modern', label: 'Modern' },
+  { id: 'technical', label: 'Technical' },
+  { id: 'executive', label: 'Executive' },
+  { id: 'minimal', label: 'Minimal' },
+  { id: 'mine', label: 'Saved' },
+];
+
+function matches(theme: ThemePreset, filter: Filter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'mine') return Boolean(theme.is_custom || theme.is_loved);
+  return !theme.is_custom && (theme.category ?? 'classic') === filter;
+}
 
 /** Exactly what applying the theme produces, with the current resume content. */
 const themeThumbDesign = themeDesignFor;
@@ -75,10 +93,13 @@ export function ThemeGallery({
   const toggleThemeLove = useResumeBuilderStore((s) => s.toggleThemeLove);
   const deleteCustomTheme = useResumeBuilderStore((s) => s.deleteCustomTheme);
   const [page, setPage] = useState(0);
+  const [filter, setFilter] = useState<Filter>('all');
 
-  const pageCount = Math.max(1, Math.ceil(themes.length / PAGE_SIZE));
+  const filters = FILTERS.filter((f) => f.id === 'all' || themes.some((t) => matches(t, f.id)));
+  const shown = themes.filter((t) => matches(t, filter));
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
-  const pageThemes = themes.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
+  const pageThemes = shown.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE);
 
   useEffect(() => {
     if (page > pageCount - 1) setPage(Math.max(0, pageCount - 1));
@@ -89,11 +110,27 @@ export function ThemeGallery({
   };
 
   return (
-    <ControlCard icon={Palette} title="Resume style">
+    <ControlCard icon={Palette} title="Resume style" description="One click restyles every section. Your content and section names stay." wide>
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
-        <p className="min-w-0 text-xs text-muted-foreground">
-          One click restyles every section. Fine-tune below.
-        </p>
+        <div role="tablist" aria-label="Theme categories" className="flex min-w-0 flex-wrap gap-1">
+          {filters.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              role="tab"
+              aria-selected={filter === f.id}
+              onClick={() => {
+                setFilter(f.id);
+                setPage(0);
+              }}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
+                filter === f.id ? 'bg-brand text-brand-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -119,7 +156,7 @@ export function ThemeGallery({
         </div>
       </div>
 
-      <div className="grid min-w-0 grid-cols-2 gap-2 sm:gap-2.5">
+      <div className="grid min-w-0 grid-cols-2 gap-2 sm:gap-2.5 @[32rem]:grid-cols-3">
         {pageThemes.map((theme) => {
           const active = theme.id === design.theme_id;
           const loved = Boolean(theme.is_loved);

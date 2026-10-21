@@ -24,7 +24,11 @@ import {
   DEFAULT_EXPERIENCE_STYLE,
   DEFAULT_SKILLS_STYLE,
   DEFAULT_SUMMARY_STYLE,
+  CORE_SECTION_IDS,
+  isExtraSectionId,
   type CertificatesStyle,
+  type ExtraSection,
+  type ExtraSectionKind,
   type ColorPreset,
   type DesignColors,
   type EducationStyle,
@@ -47,21 +51,25 @@ import type { UserProfile } from '../types/profile';
 import { requestOnce } from '../utils/requestOnce';
 import { normalizeResumeContent } from '../utils/resumeContent';
 
-const ALL_SECTIONS: SectionId[] = ['summary', 'skills', 'experience', 'education', 'certificates'];
-
-function normalizeOrder(order: SectionId[] | undefined): SectionId[] {
+/** Core sections plus this design's extra sections, in stored order; unknown ids drop. */
+function normalizeOrder(order: SectionId[] | undefined, extras: ExtraSection[]): SectionId[] {
+  const known: SectionId[] = [...CORE_SECTION_IDS, ...extras.map((s) => s.id)];
   const seen = new Set<SectionId>();
   const result: SectionId[] = [];
   for (const id of order ?? []) {
-    if (ALL_SECTIONS.includes(id) && !seen.has(id)) {
+    if (known.includes(id) && !seen.has(id)) {
       seen.add(id);
       result.push(id);
     }
   }
-  for (const id of ALL_SECTIONS) {
+  for (const id of known) {
     if (!seen.has(id)) result.push(id);
   }
   return result;
+}
+
+function newExtraId(): `x-${string}` {
+  return `x-${Math.random().toString(36).slice(2, 10).padEnd(6, '0')}`;
 }
 
 /** Fill in defaults on a raw stored design so older / partial designs render cleanly.
@@ -69,9 +77,12 @@ function normalizeOrder(order: SectionId[] | undefined): SectionId[] {
 function hydrateDesign(raw: ResumeDesign): ResumeDesign {
   // Two-column page body (Technical theme) is retired, always coerce to single column.
   const themeId = raw.theme_id === 'technical' ? 'classic' : raw.theme_id;
+  const extras = raw.extra_sections ?? [];
+  const extraIds = new Set<string>(extras.map((s) => s.id));
   return {
     ...raw,
     theme_id: themeId,
+    extra_sections: extras,
     layout: {
       ...raw.layout,
       columns: 1,
@@ -92,8 +103,8 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
       // needed (or editable); stale offsets would only misplace the icons.
       contact_icon_offset_x_pt: 0,
       contact_icon_offset_y_pt: 0,
-      section_order: normalizeOrder(raw.layout.section_order),
-      hidden_sections: raw.layout.hidden_sections ?? [],
+      section_order: normalizeOrder(raw.layout.section_order, extras),
+      hidden_sections: (raw.layout.hidden_sections ?? []).filter((id) => !isExtraSectionId(id) || extraIds.has(id)),
     },
     sections: {
       ...raw.sections,
@@ -117,7 +128,8 @@ function hydrateDesign(raw: ResumeDesign): ResumeDesign {
 
 /** The design a theme produces for *current*: the theme decides the whole look
  *  (type, colour, header, every section's treatment) while the user's content,
- *  section order/visibility, paper, header image and show/hide choices are kept. */
+ *  extra sections, section names, date format, section order/visibility, paper,
+ *  header image and show/hide choices are kept. */
 export function themeDesignFor(theme: ThemePreset, current: ResumeDesign): ResumeDesign {
   const keepImage = current.layout.header_image ?? null;
   const t = hydrateDesign(theme.design);
@@ -126,6 +138,7 @@ export function themeDesignFor(theme: ThemePreset, current: ResumeDesign): Resum
   return {
     ...t,
     content: current.content ?? t.content ?? null,
+    extra_sections: current.extra_sections ?? [],
     layout: {
       ...t.layout,
       columns: 1,
@@ -143,6 +156,9 @@ export function themeDesignFor(theme: ThemePreset, current: ResumeDesign): Resum
       ...t.sections,
       show_period: current.sections.show_period,
       show_location: current.sections.show_location,
+      titles: current.sections.titles ?? {},
+      date_format: current.sections.date_format ?? 'mon_yyyy',
+      present_label: current.sections.present_label ?? 'Present',
       experience_style: {
         ...t.sections.experience_style,
         show_employment_type: curExp.show_employment_type,
@@ -206,6 +222,12 @@ interface ResumeBuilderState {
   updateCertificatesStyle: (patch: Partial<CertificatesStyle>) => void;
   toggleSection: (id: SectionId) => void;
   moveSection: (id: SectionId, dir: -1 | 1) => void;
+  /** Rename a section heading; a blank title restores the default. */
+  setSectionTitle: (id: SectionId, title: string) => void;
+  /** Add an extra section at the end of the page; returns its id. */
+  addExtraSection: (kind: ExtraSectionKind) => SectionId | null;
+  updateExtraSection: (id: SectionId, patch: Partial<Omit<ExtraSection, 'id'>>) => void;
+  removeExtraSection: (id: SectionId) => void;
   resetToSaved: () => void;
   save: () => Promise<boolean>;
   /** Cancel any pending auto-save and immediately persist if there are unsaved edits.
@@ -749,6 +771,65 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
     if (idx < 0 || target < 0 || target >= order.length) return;
     [order[idx], order[target]] = [order[target], order[idx]];
     applyDesign(set, get, { ...d, layout: { ...d.layout, section_order: order } });
+  },
+
+  setSectionTitle: (id, title) => {
+    const d = get().design;
+    if (!d) return;
+    const clean = title.replace(/\s+/g, ' ').trim().slice(0, 60);
+    if (isExtraSectionId(id)) {
+      applyDesign(set, get, {
+        ...d,
+        extra_sections: (d.extra_sections ?? []).map((s) => (s.id === id ? { ...s, title: clean } : s)),
+      });
+      return;
+    }
+    const titles = { ...(d.sections.titles ?? {}) };
+    if (clean) titles[id] = clean;
+    else delete titles[id];
+    applyDesign(set, get, { ...d, sections: { ...d.sections, titles } });
+  },
+
+  addExtraSection: (kind) => {
+    const d = get().design;
+    if (!d) return null;
+    const extras = d.extra_sections ?? [];
+    if (extras.length >= 12) return null;
+    const id = newExtraId();
+    const layout = kind === 'languages' || kind === 'interests' ? 'inline' : kind === 'awards' ? 'list' : 'entries';
+    const section: ExtraSection = { id, kind, title: '', layout, items: [] };
+    applyDesign(set, get, {
+      ...d,
+      extra_sections: [...extras, section],
+      layout: { ...d.layout, section_order: [...d.layout.section_order, id] },
+    });
+    return id;
+  },
+
+  updateExtraSection: (id, patch) => {
+    const d = get().design;
+    if (!d) return;
+    applyDesign(set, get, {
+      ...d,
+      extra_sections: (d.extra_sections ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)),
+    });
+  },
+
+  removeExtraSection: (id) => {
+    const d = get().design;
+    if (!d) return;
+    const titles = { ...(d.sections.titles ?? {}) };
+    delete titles[id];
+    applyDesign(set, get, {
+      ...d,
+      extra_sections: (d.extra_sections ?? []).filter((s) => s.id !== id),
+      sections: { ...d.sections, titles },
+      layout: {
+        ...d.layout,
+        section_order: d.layout.section_order.filter((s) => s !== id),
+        hidden_sections: d.layout.hidden_sections.filter((s) => s !== id),
+      },
+    });
   },
 
   resetToSaved: () => {

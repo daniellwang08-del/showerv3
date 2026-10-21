@@ -35,6 +35,7 @@ from app.services.resume_builder_service import (
 from app.services.cover_letter_design_compiler import compile_cover_letter_design
 from app.services.resume_blueprint_renderer import fill_user_resume_template
 from app.services.resume_context_builder import build_render_context
+from app.utils.flexible_date import design_date_style
 from app.services.resume_design_compiler import compile_design
 from app.services.resume_design_service import load_design_for_render
 from app.api.websocket import publish_resume_event
@@ -234,7 +235,8 @@ async def run_resume_build(job_id: str, user_id: str) -> dict | None:
 
             results: dict[str, str | None] = {}
             profile = profile_payload(user)
-            render_context = None if cover_only else build_render_context(user, tailored, job)
+            with design_date_style(design):
+                render_context = None if cover_only else build_render_context(user, tailored, job)
             job_design = None if cover_only else tailored_design(design, profile, tailored)
             display_name = " ".join(p for p in (first, last) if p) or "Resume"
             build_id = build.id

@@ -23,9 +23,17 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
+from docx.text.run import Run
 
 from app.models.database import User
-from app.models.resume_design_schemas import PHOTO_SIZE_PT, ResumeDesign
+from app.models.resume_design_schemas import (
+    DEFAULT_SECTION_ORDER,
+    PHOTO_SIZE_PT,
+    ExtraItem,
+    ExtraSection,
+    ResumeDesign,
+    section_title,
+)
 from app.models.resume_template_schemas import ResumeTemplateAiValidation, ResumeTemplateBlueprint
 from app.services.resume_builder_service import (
     _replace_docx_internal,
@@ -38,7 +46,7 @@ from app.services.resume_context_builder import (
     _full_name,
     _profile_work_rows,
 )
-from app.utils.flexible_date import format_flexible_date
+from app.utils.flexible_date import design_date_style, format_flexible_date, format_flexible_period
 from app.services.resume_icons import contact_icon_png
 from app.services.resume_template_service import _default_blueprint_from_tags, count_work_roles
 
@@ -560,8 +568,105 @@ def _layout_gap(design: ResumeDesign, field: str, fallback: float) -> float:
     return value
 
 
-def _heading(container, text: str, design: ResumeDesign) -> None:
+def _heading_font(design: ResumeDesign) -> str:
+    family = design.typography.heading_font_family
+    return _render_font_family(family) if family else design.typography.font_family
+
+
+def _heading_tracking_em(design: ResumeDesign) -> float:
     typo = design.typography
+    if typo.heading_tracking_em is not None:
+        return typo.heading_tracking_em
+    return 0.04 if typo.uppercase_headings else 0.0
+
+
+def _set_char_spacing(run, twips: int) -> None:
+    if not twips:
+        return
+    rpr = run._element.get_or_add_rPr()
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:val"), str(twips))
+    rpr.append(spacing)
+
+
+def _set_para_borders(paragraph, color_hex: str, sides: dict[str, tuple[int, float]]) -> None:
+    """Paragraph borders. ``sides`` maps top/left/bottom/right to (eighths of a pt, gap pt)."""
+    p_pr = paragraph._p.get_or_add_pPr()
+    for old in p_pr.findall(qn("w:pBdr")):
+        p_pr.remove(old)
+    borders = OxmlElement("w:pBdr")
+    for side in ("top", "left", "bottom", "right"):
+        if side not in sides:
+            continue
+        sz, space = sides[side]
+        el = OxmlElement(f"w:{side}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), str(sz))
+        el.set(qn("w:space"), str(int(round(space))))
+        el.set(qn("w:color"), color_hex.lstrip("#"))
+        borders.append(el)
+    p_pr.append(borders)
+
+
+def _set_para_shading(paragraph, fill_hex: str) -> None:
+    p_pr = paragraph._p.get_or_add_pPr()
+    shd = OxmlElement("w:shd")
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill_hex.lstrip("#"))
+    p_pr.append(shd)
+
+
+# Padding inside filled / boxed headings (pt). The preview uses the same values.
+_HEADING_PAD_Y_PT = 2.0
+_HEADING_PAD_X_PT = 5.0
+_HEADING_BAR_PT = 3.0
+_HEADING_BAR_GAP_PT = 6.0
+
+
+def _style_heading_paragraph(para, design: ResumeDesign, *, center: bool | None = None) -> str:
+    """Apply the design's heading treatment to *para*; return the text colour to use."""
+    style = design.layout.effective_heading_style
+    accent = design.colors.accent
+    text_hex = design.colors.heading
+    centered = design.layout.heading_align == "center" if center is None else center
+    if centered:
+        para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    pf = para.paragraph_format
+    if style == "underline":
+        _set_para_borders(para, accent, {"bottom": (6, 2)})
+    elif style == "overline":
+        _set_para_borders(para, accent, {"top": (12, 3)})
+    elif style == "double":
+        _set_para_borders(para, accent, {"top": (6, 2), "bottom": (6, 2)})
+    elif style == "left_bar":
+        _set_para_borders(para, accent, {"left": (int(_HEADING_BAR_PT * 8), _HEADING_BAR_GAP_PT)})
+        pf.left_indent = Pt(_HEADING_BAR_PT + _HEADING_BAR_GAP_PT)
+    elif style in ("tint", "solid", "boxed"):
+        fill = _tint(accent, 0.14) if style == "tint" else accent
+        edge = accent if style == "boxed" else fill
+        pad = {"top": (4, _HEADING_PAD_Y_PT), "bottom": (4, _HEADING_PAD_Y_PT)}
+        pad.update({"left": (4, _HEADING_PAD_X_PT), "right": (4, _HEADING_PAD_X_PT)})
+        _set_para_borders(para, edge, pad)
+        if style != "boxed":
+            _set_para_shading(para, fill)
+        # Word draws side borders outside the indent; pull them back inside the margin.
+        pf.left_indent = Pt(_HEADING_PAD_X_PT + 0.5)
+        pf.right_indent = Pt(_HEADING_PAD_X_PT + 0.5)
+        if style == "solid":
+            text_hex = "#ffffff"
+    return text_hex
+
+
+def _heading_run(para, text: str, design: ResumeDesign, color_hex: str, *, size_pt: float | None = None) -> None:
+    typo = design.typography
+    size = size_pt if size_pt is not None else typo.base_font_pt * typo.heading_scale
+    run = para.add_run(text.upper() if typo.uppercase_headings else text)
+    _set_run(run, font=_heading_font(design), size_pt=size, color=_hex_to_rgb(color_hex), bold=True, caps=typo.uppercase_headings)
+    _set_char_spacing(run, int(round(_heading_tracking_em(design) * size * 20)))
+
+
+def _heading(container, text: str, design: ResumeDesign) -> None:
     para = container.add_paragraph()
     # space-before owns the section gap above the heading; space-after owns the
     # heading->first-row gap. Both come from the measured preview (constants are only a
@@ -569,17 +674,8 @@ def _heading(container, text: str, design: ResumeDesign) -> None:
     para.paragraph_format.space_before = Pt(_layout_gap(design, "heading_before_pt", design.layout.section_gap_pt))
     para.paragraph_format.space_after = Pt(_layout_gap(design, "heading_after_pt", 3.75))
     para.paragraph_format.keep_with_next = True
-    run = para.add_run(text.upper() if typo.uppercase_headings else text)
-    _set_run(
-        run,
-        font=typo.font_family,
-        size_pt=typo.base_font_pt * typo.heading_scale,
-        color=_hex_to_rgb(design.colors.heading),
-        bold=True,
-        caps=typo.uppercase_headings,
-    )
-    if design.layout.accent_rule:
-        _add_bottom_border(para, design.colors.accent)
+    color = _style_heading_paragraph(para, design)
+    _heading_run(para, text, design, color)
 
 
 def _set_exact_line_spacing(para, size_pt: float, multiplier: float) -> None:
@@ -1717,7 +1813,7 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool, *, tit
         _add_top_border(p, accent_hex)
         p.paragraph_format.space_before = Pt(2)
         run = p.add_run(title.upper())
-        _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.95, color=title_color, bold=True, caps=True)
+        _set_run(run, font=_heading_font(design), size_pt=typo.base_font_pt * 0.95, color=title_color, bold=True, caps=True)
         return [p]
 
     if mode == "badge":
@@ -1725,8 +1821,14 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool, *, tit
         badge_bg = "#ffffff" if on_solid else design.colors.accent
         badge_fg = design.colors.accent if on_solid else "#ffffff"
         run = p.add_run(f"  {title.upper()}  ")
-        _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt * 0.82, color=_hex_to_rgb(badge_fg), bold=True, caps=True)
+        _set_run(run, font=_heading_font(design), size_pt=typo.base_font_pt * 0.82, color=_hex_to_rgb(badge_fg), bold=True, caps=True)
         _set_run_shading(run, badge_bg)
+        return [p]
+
+    if st.title_accent == "none" and not on_solid:
+        # Plain summary titles follow the global heading treatment, like every section.
+        color = _style_heading_paragraph(p, design, center=True if mode == "centered" else None)
+        _heading_run(p, title, design, color)
         return [p]
 
     # Standard above / centered title.
@@ -1740,10 +1842,10 @@ def _summary_emit_title(target, design: ResumeDesign, st, on_solid: bool, *, tit
 
     run = p.add_run(title.upper() if upper else title)
     if st.title_accent == "box":
-        _set_run(run, font=typo.font_family, size_pt=size, color=_hex_to_rgb("#ffffff"), bold=True, caps=upper)
+        _set_run(run, font=_heading_font(design), size_pt=size, color=_hex_to_rgb("#ffffff"), bold=True, caps=upper)
         _set_run_shading(run, design.colors.accent)
     else:
-        _set_run(run, font=typo.font_family, size_pt=size, color=title_color, bold=True, caps=upper)
+        _set_run(run, font=_heading_font(design), size_pt=size, color=title_color, bold=True, caps=upper)
 
     # 'none' accent inherits the global accent-rule so the default style matches the
     # other section headings; 'underline' always draws it.
@@ -1822,7 +1924,7 @@ def _render_summary(container, design: ResumeDesign, *, title: str = _SUMMARY_TI
 
 
 def _render_skills(container, design: ResumeDesign) -> None:
-    _heading(container, "Technical Skills", design)
+    _heading(container, section_title(design, "skills"), design)
     _placeholder_paragraph(container, "{{SKILLS_CONTENT}}", design)
 
 
@@ -1842,7 +1944,7 @@ def _experience_date_text(design: ResumeDesign, style, row: dict[str, Any]) -> s
 
 
 def _render_experience(container, design: ResumeDesign, rows: list[dict[str, Any]], slot_count: int) -> None:
-    _heading(container, "Work Experience", design)
+    _heading(container, section_title(design, "experience"), design)
     style = design.sections.experience_style
     font = design.typography.font_family
     if not rows:
@@ -1954,7 +2056,7 @@ def _education_date_text(design: ResumeDesign, style, item: dict[str, Any]) -> s
 
 
 def _render_education(container, design: ResumeDesign, education: list[dict[str, Any]]) -> None:
-    _heading(container, "Education", design)
+    _heading(container, section_title(design, "education"), design)
     style = design.sections.education_style
     font = design.typography.font_family
     # Match the live preview, which renders the university/degree at the base font size.
@@ -2148,7 +2250,7 @@ def _emit_cert_entry(
 
 
 def _render_certificates(container, design: ResumeDesign, certificates: list[dict[str, Any]]) -> None:
-    _heading(container, "Certifications", design)
+    _heading(container, section_title(design, "certificates"), design)
     style = design.sections.certificates_style
     items = [c for c in certificates if str(c.get("name") or "").strip()]
     if not items:
@@ -2196,6 +2298,140 @@ def _render_certificates(container, design: ResumeDesign, certificates: list[dic
             _emit_cert_entry(para, item, design, prefix=prefix)
 
 
+_EXTRA_ENTRY_GAP_PT = 6.0
+_EXTRA_BULLET_INDENT_PT = 11.0
+
+
+def _extra_items(section: ExtraSection) -> list[ExtraItem]:
+    return [i for i in section.items if i.title.strip() or i.subtitle.strip() or any(b.strip() for b in i.bullets)]
+
+
+def _extra_period(item: ExtraItem) -> str:
+    if item.date_start.strip():
+        return format_flexible_period(item.date_start, item.date_end)
+    return format_flexible_date(item.date_end)
+
+
+def _extra_title_runs(para, item: ExtraItem, design: ResumeDesign, *, bold_title: bool = True) -> None:
+    typo = design.typography
+    size = typo.base_font_pt
+    text = _hex_to_rgb(design.colors.text)
+    title = item.title.strip()
+    href = _ensure_http_url(item.url)
+    if title and href:
+        _add_hyperlink_text(para, href, title, font=typo.font_family, size_pt=size, color=text)
+        if bold_title:
+            for r in para._p.iter(qn("w:r")):
+                Run(r, para).font.bold = True
+    elif title:
+        run = para.add_run(title)
+        _set_run(run, font=typo.font_family, size_pt=size, color=text, bold=bold_title)
+    if item.subtitle.strip():
+        sep = ", " if title else ""
+        run = para.add_run(f"{sep}{item.subtitle.strip()}")
+        _set_run(run, font=typo.font_family, size_pt=size, color=_hex_to_rgb(design.colors.muted if not bold_title else design.colors.text))
+
+
+def _extra_bullet(container, text: str, design: ResumeDesign) -> None:
+    typo = design.typography
+    para = container.add_paragraph()
+    pf = para.paragraph_format
+    pf.space_before = Pt(1.5)
+    pf.space_after = Pt(0)
+    pf.left_indent = Pt(_EXTRA_BULLET_INDENT_PT)
+    pf.first_line_indent = Pt(-_EXTRA_BULLET_INDENT_PT)
+    pf.tab_stops.add_tab_stop(Pt(_EXTRA_BULLET_INDENT_PT))
+    _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+    marker = para.add_run("\u2022\t")
+    _set_run(marker, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.accent))
+    run = para.add_run(text)
+    _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text))
+
+
+def _render_extra_section(container, design: ResumeDesign, section: ExtraSection) -> None:
+    items = _extra_items(section)
+    if not items:
+        return
+    title = (design.sections.titles or {}).get(section.id) or section.display_title
+    _heading(container, title, design)
+    typo = design.typography
+    muted = _hex_to_rgb(design.colors.muted)
+    sub_pt = typo.base_font_pt * 0.92
+
+    if section.layout == "inline":
+        para = container.add_paragraph()
+        para.paragraph_format.space_after = Pt(0)
+        _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+        for idx, item in enumerate(items):
+            if idx:
+                sep = para.add_run("  \u00b7  ")
+                _set_run(sep, font=typo.font_family, size_pt=typo.base_font_pt, color=muted)
+            run = para.add_run(item.title.strip())
+            _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text))
+            if item.subtitle.strip():
+                tail = para.add_run(f" ({item.subtitle.strip()})")
+                _set_run(tail, font=typo.font_family, size_pt=typo.base_font_pt, color=muted)
+        return
+
+    if section.layout == "columns":
+        rows = (len(items) + 1) // 2
+        table = container.add_table(rows=rows, cols=2)
+        _clear_table_borders(table)
+        usable_tw = int(round(_container_usable_emu(container, design) / 635))
+        half = usable_tw // 2
+        _set_centered_fixed_table(table, [half, usable_tw - half], contain_tw=usable_tw)
+        for idx, item in enumerate(items):
+            cell = table.rows[idx // 2].cells[idx % 2]
+            _set_cell_margins(cell, top=0, bottom=int(round(_EXTRA_ENTRY_GAP_PT * 10)), left=0, right=120)
+            para = cell.paragraphs[0]
+            _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+            run = para.add_run(item.title.strip())
+            _set_run(run, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.text), bold=True)
+            if item.subtitle.strip():
+                tail = para.add_run(f"  {item.subtitle.strip()}")
+                _set_run(tail, font=typo.font_family, size_pt=sub_pt, color=muted)
+        return
+
+    if section.layout == "list":
+        for idx, item in enumerate(items):
+            para = container.add_paragraph()
+            pf = para.paragraph_format
+            pf.space_before = Pt(0 if idx == 0 else 1.0)
+            pf.space_after = Pt(0)
+            pf.left_indent = Pt(_EXTRA_BULLET_INDENT_PT)
+            pf.first_line_indent = Pt(-_EXTRA_BULLET_INDENT_PT)
+            pf.tab_stops.add_tab_stop(Pt(_EXTRA_BULLET_INDENT_PT))
+            _set_exact_line_spacing(para, typo.base_font_pt, typo.line_spacing)
+            marker = para.add_run("\u2022\t")
+            _set_run(marker, font=typo.font_family, size_pt=typo.base_font_pt, color=_hex_to_rgb(design.colors.accent))
+            _extra_title_runs(para, item, design, bold_title=False)
+            period = _extra_period(item)
+            if period:
+                tail = para.add_run(f" ({period})")
+                _set_run(tail, font=typo.font_family, size_pt=typo.base_font_pt, color=muted)
+        return
+
+    usable_emu = _container_usable_emu(container, design)
+    for idx, item in enumerate(items):
+        period = _extra_period(item)
+        head = container.add_paragraph()
+        head.paragraph_format.space_before = Pt(0 if idx == 0 else _EXTRA_ENTRY_GAP_PT)
+        head.paragraph_format.space_after = Pt(0)
+        head.paragraph_format.keep_with_next = True
+        _set_exact_line_spacing(head, typo.base_font_pt, typo.line_spacing)
+        if period:
+            head.paragraph_format.tab_stops.add_tab_stop(Emu(usable_emu), WD_TAB_ALIGNMENT.RIGHT)
+        _extra_title_runs(head, item, design)
+        if period:
+            date_run = head.add_run(f"\t{period}")
+            _set_run(date_run, font=typo.font_family, size_pt=sub_pt, color=muted)
+        if item.location.strip():
+            _body(container, item.location.strip(), design, color_hex=design.colors.muted, size_delta=sub_pt - typo.base_font_pt, space_after=0.0)
+        for bullet in item.bullets:
+            if bullet.strip():
+                _extra_bullet(container, bullet.strip(), design)
+
+
 def _skill_count(user: User) -> int:
     count = 0
     for item in getattr(user, "technical_skills", None) or []:
@@ -2237,6 +2473,17 @@ def compile_design(
     *,
     apply_content: bool = False,
 ) -> tuple[list[str], ResumeTemplateBlueprint]:
+    with design_date_style(design):
+        return _compile_design(design, user, out_path, apply_content=apply_content)
+
+
+def _compile_design(
+    design: ResumeDesign,
+    user: User,
+    out_path: Path,
+    *,
+    apply_content: bool,
+) -> tuple[list[str], ResumeTemplateBlueprint]:
     """Build a styled .docx for *design* at *out_path*; return (tags, blueprint).
 
     When *apply_content* is true and the design carries a manual content override
@@ -2274,6 +2521,8 @@ def compile_design(
         order.remove("education")
     if not certificates and "certificates" in order:
         order.remove("certificates")
+    filled_extras = {x.id for x in design.extra_sections if _extra_items(x)}
+    order = [s for s in order if s in DEFAULT_SECTION_ORDER or s in filled_extras]
     if "summary" not in order:
         order.insert(0, "summary")
     if "experience" not in order:
@@ -2292,9 +2541,13 @@ def compile_design(
     normal.font.size = Pt(design.typography.base_font_pt)
     normal.font.color.rgb = _hex_to_rgb(design.colors.text)
 
+    extras = {x.id: x for x in design.extra_sections}
+
     def render_section(container, sec: str) -> None:
-        if sec == "summary":
-            _render_summary(container, design)
+        if sec in extras:
+            _render_extra_section(container, design, extras[sec])
+        elif sec == "summary":
+            _render_summary(container, design, title=section_title(design, "summary"))
         elif sec == "skills":
             _render_skills(container, design)
         elif sec == "experience":
@@ -2371,7 +2624,7 @@ def compile_design(
     doc.save(str(out_path))
     _strip_headers(out_path)
     # Embed the rendered font so the .docx/PDF looks identical on hosts that lack it.
-    _embed_fonts(out_path, [design.typography.font_family])
+    _embed_fonts(out_path, list(dict.fromkeys([design.typography.font_family, _heading_font(design)])))
 
     tags: list[str] = ["{{PROFILE_SUMMARY}}"]
     if has_skills and "skills" in order:

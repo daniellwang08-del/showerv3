@@ -19,6 +19,7 @@ from app.models.resume_design_schemas import (
 )
 from app.services.resume_blueprint_renderer import fill_user_resume_template
 from app.services.resume_context_builder import build_preview_tailored, build_render_context
+from app.utils.flexible_date import design_date_style
 from app.services.resume_design_compiler import compile_design
 from app.services.resume_template_service import (
     _blueprint_for_storage,
@@ -912,7 +913,8 @@ async def generate_design_preview_docx(user_id: str, design: ResumeDesign) -> Pa
 
         content_user = apply_content_overlay(user, design.content)
         tailored = build_preview_tailored(content_user)
-        context = build_render_context(content_user, tailored, job=None)
+        with design_date_style(design):
+            context = build_render_context(content_user, tailored, job=None)
         # Preview reflects the design being edited (which may be unsaved), so override
         # the skills theme + palette the fill engine uses.
         context["tailored"]["skills_style"] = design.sections.skills_style.model_dump(mode="json")

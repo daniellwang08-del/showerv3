@@ -6,17 +6,31 @@ import type { ReactNode } from 'react';
 export function ControlCard({
   icon: Icon,
   title,
+  description,
+  actions,
+  wide = false,
   children,
 }: {
   icon: LucideIcon;
   title: string;
+  description?: ReactNode;
+  actions?: ReactNode;
+  /** Spans every column when the studio panel flows cards side by side. */
+  wide?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section className="min-w-0 rounded-2xl border bg-card p-3.5 text-card-foreground shadow-sm sm:p-4">
-      <div className="mb-3 flex min-w-0 items-center gap-2">
-        <Icon size={16} className="shrink-0 text-muted-foreground" />
-        <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">{title}</h3>
+    <section
+      data-wide={wide || undefined}
+      className="min-w-0 rounded-2xl border bg-card p-3.5 text-card-foreground shadow-sm sm:p-4"
+    >
+      <div className="mb-3 flex min-w-0 items-start gap-2">
+        <Icon size={16} className="mt-0.5 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-foreground">{title}</h3>
+          {description ? <p className="mt-0.5 text-xs text-muted-foreground">{description}</p> : null}
+        </div>
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
       <div className="min-w-0 space-y-3">{children}</div>
     </section>

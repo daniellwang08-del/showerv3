@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   AlertCircle,
   ChevronDown,
+  ClipboardCheck,
   Download,
   FileText,
   FileType2,
@@ -42,6 +43,10 @@ import { PhotoControls } from '@/components/resumeBuilder/PhotoControls';
 import { SectionDetails } from '@/components/resumeBuilder/SectionDetails';
 import { SectionManager } from '@/components/resumeBuilder/SectionManager';
 import { ContentControls } from '@/components/resumeBuilder/ContentControls';
+import { DateControls } from '@/components/resumeBuilder/DateControls';
+import { ExtraSectionsEditor } from '@/components/resumeBuilder/ExtraSectionsEditor';
+import { HeadingControls } from '@/components/resumeBuilder/HeadingControls';
+import { ResumeReview, tightenDesign, type FitState } from '@/components/resumeBuilder/ResumeReview';
 import { Toolbar } from '@/components/resumeBuilder/Toolbar';
 import { ControlCard } from '@/components/resumeBuilder/controls';
 import { PAPER_SIZES, ResumePageStack, paperOf } from '@/components/resumeBuilder/PagedResumePreview';
@@ -56,18 +61,21 @@ import {
   saveFile,
   saveLibraryCoverLetter,
 } from '@/api/documentsApi';
-import type { PaperSize } from '@/types/resumeDesign';
+import type { PaperSize, ResumeDesign } from '@/types/resumeDesign';
 import { StudioAiChat, StudioAiChatToggle } from './StudioAiChat';
 
-type Tab = 'style' | 'format' | 'sections' | 'content';
+type Tab = 'style' | 'format' | 'sections' | 'content' | 'review';
 type DocKind = 'resume' | 'letter';
 const AI_OPEN_KEY = 'nao.studio.aiOpen';
+const FIT_STEP_MS = 260;
+const FIT_MAX_STEPS = 40;
 
 const TABS: { id: Tab; label: string; icon: typeof Palette }[] = [
   { id: 'style', label: 'Style', icon: Palette },
   { id: 'format', label: 'Format', icon: Type },
   { id: 'sections', label: 'Sections', icon: Rows3 },
   { id: 'content', label: 'Content', icon: PenLine },
+  { id: 'review', label: 'Review', icon: ClipboardCheck },
 ];
 
 const ZOOM_STEPS = [0.3, 0.4, 0.5, 0.67, 0.75, 0.85, 1, 1.1, 1.25, 1.5, 1.75, 2];
@@ -108,6 +116,11 @@ export function ResumeStudioPage() {
   const [letterSaving, setLetterSaving] = useState(false);
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
   const letterTimer = useRef<number | null>(null);
+  const [fit, setFit] = useState<FitState>(null);
+  const fitUndo = useRef<ResumeDesign | null>(null);
+  const fitTimer = useRef<number | null>(null);
+  const pageCountRef = useRef(pageCount);
+  pageCountRef.current = pageCount;
   const [aiOpen, setAiOpen] = useState(() => {
     try {
       return sessionStorage.getItem(AI_OPEN_KEY) === '1';
@@ -119,10 +132,48 @@ export function ResumeStudioPage() {
   useEffect(() => {
     void store.load();
     return () => {
+      if (fitTimer.current) window.clearTimeout(fitTimer.current);
       useResumeBuilderStore.getState().flushAutoSave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Tighten spacing, then margins, then text size, one step per repagination. */
+  const fitToPages = (target: 1 | 2) => {
+    const s = useResumeBuilderStore.getState();
+    if (!s.design) return;
+    if (fitTimer.current) window.clearTimeout(fitTimer.current);
+    setDoc('resume');
+    fitUndo.current = s.design;
+    setFit({ target, status: 'running' });
+    let steps = 0;
+    const tick = () => {
+      fitTimer.current = null;
+      if (pageCountRef.current <= target) {
+        setFit({ target, status: 'done' });
+        return;
+      }
+      const current = useResumeBuilderStore.getState().design;
+      const next = current && steps < FIT_MAX_STEPS ? tightenDesign(current) : null;
+      if (!next) {
+        setFit({ target, status: 'stuck' });
+        return;
+      }
+      steps += 1;
+      useResumeBuilderStore.getState().updateDesign(() => next);
+      fitTimer.current = window.setTimeout(tick, FIT_STEP_MS);
+    };
+    // The cover letter may be on screen; let the resume paginate before measuring.
+    if (doc === 'letter') fitTimer.current = window.setTimeout(tick, FIT_STEP_MS);
+    else tick();
+  };
+
+  const undoFit = () => {
+    const before = fitUndo.current;
+    if (before) store.updateDesign(() => before);
+    fitUndo.current = null;
+    setFit(null);
+  };
 
   useEffect(() => {
     try {
@@ -273,6 +324,12 @@ export function ResumeStudioPage() {
     ),
     format: (
       <>
+        <HeadingControls
+          design={design}
+          fonts={catalog.fonts}
+          onTypography={store.updateTypography}
+          onLayout={store.updateLayout}
+        />
         <FormatControls
           design={design}
           onTypography={store.updateTypography}
@@ -288,7 +345,17 @@ export function ResumeStudioPage() {
     ),
     sections: (
       <>
-        <SectionManager design={design} onToggle={store.toggleSection} onMove={store.moveSection} />
+        <SectionManager
+          design={design}
+          onToggle={store.toggleSection}
+          onMove={store.moveSection}
+          onRename={store.setSectionTitle}
+          onAdd={(kind) => {
+            if (store.addExtraSection(kind)) setTab('content');
+          }}
+          onRemove={store.removeExtraSection}
+        />
+        <DateControls design={design} onSections={store.updateSectionOptions} />
         <SectionDetails
           design={design}
           onSections={store.updateSectionOptions}
@@ -320,13 +387,31 @@ export function ResumeStudioPage() {
             profile,
           )}
           onChange={store.setContent}
+          extra={
+            <ExtraSectionsEditor
+              design={design}
+              onAdd={(kind) => void store.addExtraSection(kind)}
+              onUpdate={store.updateExtraSection}
+              onRemove={store.removeExtraSection}
+            />
+          }
         />
       ),
+    review: (
+      <ResumeReview
+        design={design}
+        profile={previewProfile}
+        pageCount={pageCount}
+        fit={fit}
+        onFit={fitToPages}
+        onUndoFit={fit && fit.status !== 'running' && fitUndo.current ? undoFit : undefined}
+      />
+    ),
   };
 
   const controlPanel = (
     <aside className="flex min-h-0 min-w-0 flex-1 flex-col border-r bg-background max-lg:border-r-0">
-      <div role="tablist" aria-label="Studio panels" className="grid shrink-0 grid-cols-4 gap-1 border-b p-2">
+      <div role="tablist" aria-label="Studio panels" className="grid shrink-0 grid-cols-5 gap-1 border-b p-2">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -344,7 +429,9 @@ export function ResumeStudioPage() {
           </button>
         ))}
       </div>
-      <div className="builder-scroll min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3">{panels[tab]}</div>
+      <div className="builder-scroll @container min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+        <div className={cn(tab === 'content' ? 'space-y-3' : 'studio-panel-flow')}>{panels[tab]}</div>
+      </div>
     </aside>
   );
 
@@ -564,8 +651,8 @@ export function ResumeStudioPage() {
         className={cn(
           'relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden',
           aiOpen
-            ? 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,22rem)] xl:grid-cols-[minmax(20rem,22rem)_minmax(0,1fr)_minmax(20rem,22rem)]'
-            : 'lg:grid-cols-[minmax(20rem,24rem)_minmax(0,1fr)]',
+            ? 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,22rem)] xl:grid-cols-[minmax(28rem,32rem)_minmax(0,1fr)_minmax(20rem,22rem)] 2xl:grid-cols-[minmax(36rem,43rem)_minmax(0,1fr)_minmax(20rem,22rem)]'
+            : 'lg:grid-cols-[minmax(30rem,34rem)_minmax(0,1fr)] xl:grid-cols-[minmax(36rem,43rem)_minmax(0,1fr)]',
         )}
       >
         <div

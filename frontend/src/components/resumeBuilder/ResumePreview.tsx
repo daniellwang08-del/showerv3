@@ -16,10 +16,14 @@ import {
   DEFAULT_SKILLS_STYLE,
   DEFAULT_SUMMARY_STYLE,
   PHOTO_SIZE_PT,
-  SECTION_LABELS,
+  dateStyleOf,
+  effectiveHeadingStyle,
   headerPadSides,
+  isExtraSectionId,
   marginSides,
+  sectionTitle,
 } from '../../types/resumeDesign';
+import type { ExtraItem, ExtraSection } from '../../types/resumeDesign';
 import type {
   CertificateBlock,
   EducationBlock,
@@ -104,8 +108,78 @@ function tint(hex: string, keep: number): string {
   return `#${hx(mix(r))}${hx(mix(g))}${hx(mix(b))}`;
 }
 
-function period(start?: string, end?: string): string {
-  return formatFlexiblePeriod(start, end);
+function period(design: ResumeDesign, start?: string, end?: string): string {
+  return formatFlexiblePeriod(start, end, dateStyleOf(design));
+}
+
+const SERIF_FAMILIES = ['Georgia', 'Cambria', 'Times New Roman', 'Garamond', 'Source Serif 4', 'Lora'];
+
+/** CSS stack for a designed family, rendered with the bundled face the PDF also uses. */
+export function resumeFontStack(family: string): string {
+  const fallback = SERIF_FAMILIES.includes(family) ? 'serif' : 'sans-serif';
+  // Calibri renders with the metric-identical Carlito; the original family stays as a
+  // fallback for the moment before the web font loads.
+  const primary = RESUME_FONT_RENDER[family] ?? family;
+  const secondary = primary !== family ? `, "${family}"` : '';
+  return `"${primary}"${secondary}, ${fallback}`;
+}
+
+// Padding inside filled and boxed headings (pt); same values as the .docx compiler.
+const HEADING_PAD_Y_PT = 2;
+const HEADING_PAD_X_PT = 5;
+const HEADING_BAR_PT = 3;
+const HEADING_BAR_GAP_PT = 6;
+
+/** Section heading look; mirrors `_style_heading_paragraph` and `_heading_run`. */
+export function sectionHeadingStyle(design: ResumeDesign, center?: boolean): CSSProperties {
+  const { typography: t, colors: c, layout: l } = design;
+  const tracking = t.heading_tracking_em ?? (t.uppercase_headings ? 0.04 : 0);
+  const css: CSSProperties = {
+    fontSize: t.base_font_pt * PT_TO_PX * t.heading_scale,
+    color: c.heading,
+    fontWeight: 700,
+    textTransform: t.uppercase_headings ? 'uppercase' : 'none',
+    letterSpacing: tracking ? `${tracking}em` : 0,
+    textAlign: (center ?? l.heading_align === 'center') ? 'center' : 'left',
+    fontFamily: t.heading_font_family ? resumeFontStack(t.heading_font_family) : undefined,
+  };
+  const px = (pt: number) => pt * PT_TO_PX;
+  const box = `${px(HEADING_PAD_Y_PT)}px ${px(HEADING_PAD_X_PT)}px`;
+  switch (effectiveHeadingStyle(l)) {
+    case 'underline':
+      css.borderBottom = `1.5px solid ${c.accent}`;
+      css.paddingBottom = 2;
+      break;
+    case 'overline':
+      css.borderTop = `2px solid ${c.accent}`;
+      css.paddingTop = px(3);
+      break;
+    case 'double':
+      css.borderTop = `1px solid ${c.accent}`;
+      css.borderBottom = `1px solid ${c.accent}`;
+      css.padding = `${px(2)}px 0`;
+      break;
+    case 'left_bar':
+      css.borderLeft = `${px(HEADING_BAR_PT)}px solid ${c.accent}`;
+      css.paddingLeft = px(HEADING_BAR_GAP_PT);
+      break;
+    case 'tint':
+      css.background = tint(c.accent, 0.14);
+      css.padding = box;
+      break;
+    case 'solid':
+      css.background = c.accent;
+      css.color = '#ffffff';
+      css.padding = box;
+      break;
+    case 'boxed':
+      css.border = `${px(0.5)}px solid ${c.accent}`;
+      css.padding = box;
+      break;
+    default:
+      break;
+  }
+  return css;
 }
 
 /**
@@ -336,7 +410,7 @@ export function SummaryBlock({
   const base = t.base_font_pt * PT_TO_PX;
   const st = style ?? DEFAULT_SUMMARY_STYLE;
   const upper = t.uppercase_headings;
-  const titleText = title ?? SECTION_LABELS.summary;
+  const titleText = title ?? sectionTitle(design, 'summary');
   const padPx = st.pad_pt * PT_TO_PX;
   const onSolid = st.surface === 'solid' || st.surface === 'gradient';
   const hasBox = st.surface !== 'none' || st.border !== 'none';
@@ -387,6 +461,7 @@ export function SummaryBlock({
     textTransform: upper ? 'uppercase' : 'none',
     letterSpacing: upper ? '0.04em' : 0,
     lineHeight: 1.2,
+    fontFamily: t.heading_font_family ? resumeFontStack(t.heading_font_family) : undefined,
   };
 
   const pStyle: CSSProperties = {
@@ -415,6 +490,12 @@ export function SummaryBlock({
 
   function stdTitle(center: boolean): ReactNode {
     const ta: CSSProperties['textAlign'] = center ? 'center' : 'left';
+    if (st.title_accent === 'none' && !onSolid) {
+      // Plain summary titles follow the global heading treatment, like every section.
+      return (
+        <div style={{ ...sectionHeadingStyle(design, center || undefined), lineHeight: 1.2, marginBottom: 5 }}>{titleText}</div>
+      );
+    }
     if (st.title_accent === 'bar') {
       return (
         <div style={{ marginBottom: 5, textAlign: ta }}>
@@ -727,7 +808,7 @@ const MARKER_GLYPH: Record<string, string> = {
 };
 
 /** Normalized fields for one role, structured first with a legacy-description fallback. */
-function deriveExperience(w: WorkExperienceBlock): {
+function deriveExperience(design: ResumeDesign, w: WorkExperienceBlock): {
   company: string;
   role: string;
   periodStr: string;
@@ -743,7 +824,7 @@ function deriveExperience(w: WorkExperienceBlock): {
   return {
     company: (w.company_name || '').trim(),
     role: (w.job_title || '').trim(),
-    periodStr: period(w.period_start, w.period_end),
+    periodStr: period(design, w.period_start, w.period_end),
     location: (w.location || '').trim(),
     employmentType: (w.employment_type || '').trim(),
     arrangement: (w.job_type || '').trim(),
@@ -841,7 +922,7 @@ export function ExperienceBlock({
   };
 
   const renderEntry = (w: WorkExperienceBlock, idx: number): ReactNode => {
-    const e = deriveExperience(w);
+    const e = deriveExperience(design, w);
     const bgs = badges(e);
     const dateBits = [showPeriod ? e.periodStr : '', showLocation ? e.location : ''].filter(Boolean);
     const inlineBadgeText = st.badge_style === 'inline' ? bgs.map((b) => b.text) : [];
@@ -1142,7 +1223,7 @@ export function EducationBlock({
     const uni = (e.university_name || '').trim();
     const degree = (e.degree || '').trim();
     const dateBits = [
-      st.show_period ? period(e.period_start, e.period_end) : '',
+      st.show_period ? period(design, e.period_start, e.period_end) : '',
       st.show_mark ? (e.mark || '').trim() : '',
       st.show_location ? (e.location || '').trim() : '',
     ].filter(Boolean);
@@ -1283,7 +1364,7 @@ export function CertificatesBlock({
   };
 
   const certLabel = (cert: CertificateBlock, color: string = c.text): ReactNode => {
-    const issued = formatFlexibleDate(cert.issued_at);
+    const issued = formatFlexibleDate(cert.issued_at, '', dateStyleOf(design));
     return (
       <>
         {certNameNode(cert, color)}
@@ -1402,6 +1483,116 @@ export function CertificatesBlock({
   return Object.keys(surface).length > 0 ? <div data-block style={surface}>{content}</div> : <div data-block>{content}</div>;
 }
 
+// Same spacing as `_render_extra_section` in the .docx compiler (pt).
+const EXTRA_ENTRY_GAP_PT = 6;
+const EXTRA_BULLET_INDENT_PT = 11;
+
+export function filledExtraItems(section: ExtraSection): ExtraItem[] {
+  return section.items.filter((i) => i.title.trim() || i.subtitle.trim() || i.bullets.some((b) => b.trim()));
+}
+
+function extraPeriod(design: ResumeDesign, item: ExtraItem): string {
+  const style = dateStyleOf(design);
+  if (item.date_start.trim()) return formatFlexiblePeriod(item.date_start, item.date_end, style);
+  return formatFlexibleDate(item.date_end, '', style);
+}
+
+function ExtraSectionBlock({ design, section, items }: { design: ResumeDesign; section: ExtraSection; items: ExtraItem[] }) {
+  const { typography: t, colors: c } = design;
+  const base = t.base_font_pt * PT_TO_PX;
+  const sub = base * 0.92;
+  const line: CSSProperties = { lineHeight: t.line_spacing, color: c.text };
+  const bulletRow = (key: string | number, children: ReactNode, marginTop: number) => (
+    <div key={key} data-block style={{ ...line, display: 'flex', marginTop }}>
+      <span style={{ flex: `0 0 ${EXTRA_BULLET_INDENT_PT * PT_TO_PX}px`, color: c.accent }}>{'\u2022'}</span>
+      <span style={{ flex: '1 1 auto', minWidth: 0 }}>{children}</span>
+    </div>
+  );
+  const titleRuns = (item: ExtraItem, boldTitle: boolean) => (
+    <>
+      {item.title.trim() && <span style={{ fontWeight: boldTitle ? 700 : 400 }}>{item.title.trim()}</span>}
+      {item.subtitle.trim() && (
+        <span style={{ color: boldTitle ? c.text : c.muted }}>
+          {item.title.trim() ? ', ' : ''}
+          {item.subtitle.trim()}
+        </span>
+      )}
+    </>
+  );
+
+  if (section.layout === 'inline') {
+    return (
+      <div data-block style={line}>
+        {items.map((item, i) => (
+          <span key={i}>
+            {i > 0 && <span style={{ color: c.muted, whiteSpace: 'pre' }}>{'  \u00b7  '}</span>}
+            {item.title.trim()}
+            {item.subtitle.trim() && <span style={{ color: c.muted }}> ({item.subtitle.trim()})</span>}
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  if (section.layout === 'columns') {
+    return (
+      <div data-block style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', rowGap: EXTRA_ENTRY_GAP_PT * PT_TO_PX }}>
+        {items.map((item, i) => (
+          <div key={i} style={{ ...line, minWidth: 0, paddingRight: 6 * PT_TO_PX }}>
+            <span style={{ fontWeight: 700 }}>{item.title.trim()}</span>
+            {item.subtitle.trim() && <span style={{ color: c.muted, fontSize: sub, whiteSpace: 'pre-wrap' }}>{`  ${item.subtitle.trim()}`}</span>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (section.layout === 'list') {
+    return (
+      <div>
+        {items.map((item, i) => {
+          const when = extraPeriod(design, item);
+          return bulletRow(
+            i,
+            <>
+              {titleRuns(item, false)}
+              {when && <span style={{ color: c.muted }}> ({when})</span>}
+            </>,
+            i === 0 ? 0 : 1 * PT_TO_PX,
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {items.map((item, i) => {
+        const when = extraPeriod(design, item);
+        return (
+          <div key={i} style={{ marginTop: i === 0 ? 0 : EXTRA_ENTRY_GAP_PT * PT_TO_PX }}>
+            <div data-block style={line}>
+              <TitleDateRow
+                title={titleRuns(item, true)}
+                date={when ? <span style={{ color: c.muted, fontSize: sub }}>{when}</span> : null}
+                right
+              />
+            </div>
+            {item.location.trim() && (
+              <div data-block style={{ ...line, color: c.muted, fontSize: sub }}>
+                {item.location.trim()}
+              </div>
+            )}
+            {item.bullets
+              .filter((b) => b.trim())
+              .map((b, j) => bulletRow(j, b.trim(), 1.5 * PT_TO_PX))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ResumePreview({ design, profile, paged = false, letter = null }: ResumePreviewProps) {
   const { typography: t, colors: c, layout: l, sections: opts } = design;
   const base = t.base_font_pt * PT_TO_PX;
@@ -1412,25 +1603,23 @@ export function ResumePreview({ design, profile, paged = false, letter = null }:
   const mBottomPx = mSides.bottom * PT_TO_PX;
   const mLeftPx = mSides.left * PT_TO_PX;
 
-  const fontStack = useMemo(() => {
-    const serif = ['Georgia', 'Cambria', 'Times New Roman', 'Garamond', 'Source Serif 4', 'Lora'];
-    const fallback = serif.includes(t.font_family) ? 'serif' : 'sans-serif';
-    // Render with the same font the .docx/PDF uses so wrapping + page breaks match.
-    // Calibri designs render with the bundled, metric-identical Carlito (the original
-    // family stays as a secondary fallback for the brief moment before the web font
-    // loads, since it is metric-compatible).
-    const primary = RESUME_FONT_RENDER[t.font_family] ?? t.font_family;
-    const secondary = primary !== t.font_family ? `, "${t.font_family}"` : '';
-    return `"${primary}"${secondary}, ${fallback}`;
-  }, [t.font_family]);
+  // Render with the same font the .docx/PDF uses so wrapping and page breaks match.
+  const fontStack = useMemo(() => resumeFontStack(t.font_family), [t.font_family]);
 
   const skills = asArray<TechnicalSkillBlock>(profile?.technical_skills).filter((s) => (s.category || s.skills));
   const work = asArray<WorkExperienceBlock>(profile?.work_experience).filter((w) => (w.company_name || w.job_title));
   const education = asArray<EducationBlock>(profile?.education).filter((e) => (e.university_name || e.degree));
   const certificates = asArray<CertificateBlock>(profile?.certificates).filter((e) => e.name);
 
+  const extras = new Map<string, { section: ExtraSection; items: ExtraItem[] }>();
+  for (const section of design.extra_sections ?? []) {
+    const items = filledExtraItems(section);
+    if (items.length) extras.set(section.id, { section, items });
+  }
+
   const order: SectionId[] = letter ? ['summary'] : l.section_order.filter((s) => !l.hidden_sections.includes(s));
   const visible = order.filter((s) => {
+    if (isExtraSectionId(s)) return extras.has(s);
     if (s === 'skills') return skills.length > 0;
     if (s === 'education') return education.length > 0;
     if (s === 'certificates') return certificates.length > 0;
@@ -1438,25 +1627,25 @@ export function ResumePreview({ design, profile, paged = false, letter = null }:
   });
 
   const headingStyle: CSSProperties = {
-    fontSize: base * t.heading_scale,
-    color: c.heading,
-    fontWeight: 700,
-    textTransform: t.uppercase_headings ? 'uppercase' : 'none',
-    letterSpacing: t.uppercase_headings ? '0.04em' : 0,
-    borderBottom: l.accent_rule ? `1.5px solid ${c.accent}` : 'none',
-    paddingBottom: l.accent_rule ? 2 : 0,
+    ...sectionHeadingStyle(design),
     marginBottom: 5,
     marginTop: l.section_gap_pt * PT_TO_PX,
   };
 
-  const bodyStyle: CSSProperties = { color: c.text, lineHeight: t.line_spacing };
-  const mutedStyle: CSSProperties = { color: c.muted, fontSize: base * 0.92 };
-
   function Heading({ id }: { id: SectionId }) {
-    return <div data-block data-gap-role="heading" style={headingStyle}>{SECTION_LABELS[id]}</div>;
+    return <div data-block data-gap-role="heading" style={headingStyle}>{sectionTitle(design, id)}</div>;
   }
 
   function renderSection(id: SectionId) {
+    const extra = extras.get(id);
+    if (extra) {
+      return (
+        <div key={id}>
+          <Heading id={id} />
+          <ExtraSectionBlock design={design} section={extra.section} items={extra.items} />
+        </div>
+      );
+    }
     switch (id) {
       case 'summary':
         return (

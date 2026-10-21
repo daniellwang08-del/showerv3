@@ -50,7 +50,7 @@ function move<T>(arr: T[], i: number, dir: -1 | 1): T[] {
   return next;
 }
 
-function RowTools({
+export function RowTools({
   index,
   count,
   onMove,
@@ -79,7 +79,7 @@ function RowTools({
   );
 }
 
-function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
+export function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
   return (
     <button
       type="button"
@@ -91,7 +91,7 @@ function AddButton({ onClick, label }: { onClick: () => void; label: string }) {
   );
 }
 
-function Collapsible({ title, subtitle, tools, children, defaultOpen = false }: { title: string; subtitle?: string; tools: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
+export function Collapsible({ title, subtitle, tools, children, defaultOpen = false }: { title: string; subtitle?: string; tools: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <div className="rounded-xl border bg-muted/50">
@@ -261,9 +261,12 @@ function WorkExperienceEditor({
 export function ContentControls({
   content,
   onChange,
+  extra,
 }: {
   content: ResumeContent;
   onChange: (next: ResumeContent) => void;
+  /** Extra section editors, shown after certifications and above the save bar. */
+  extra?: ReactNode;
 }) {
   const dirty = useResumeBuilderStore(selectIsDirty);
   const saving = useResumeBuilderStore((s) => s.saving);
@@ -475,6 +478,7 @@ export function ContentControls({
       {experience}
       {education}
       {certificates}
+      {extra}
 
       <div className="sticky bottom-2 z-10 rounded-xl border bg-popover p-3 text-popover-foreground shadow-lg">
         <div className="flex flex-wrap items-center gap-3">

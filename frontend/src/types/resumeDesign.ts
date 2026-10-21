@@ -1,4 +1,50 @@
-export type SectionId = 'summary' | 'skills' | 'experience' | 'education' | 'certificates';
+import type { DateFormat } from '../utils/flexibleDate';
+
+export type CoreSectionId = 'summary' | 'skills' | 'experience' | 'education' | 'certificates';
+/** Core sections plus user-added extra sections (`x-<id>`). */
+export type SectionId = CoreSectionId | `x-${string}`;
+
+export const CORE_SECTION_IDS: CoreSectionId[] = ['summary', 'skills', 'experience', 'education', 'certificates'];
+
+export function isExtraSectionId(id: string): id is `x-${string}` {
+  return id.startsWith('x-');
+}
+
+export type HeadingStyle = 'plain' | 'underline' | 'overline' | 'double' | 'left_bar' | 'tint' | 'solid' | 'boxed';
+export type HeadingAlign = 'left' | 'center';
+
+export type ExtraSectionKind = 'projects' | 'languages' | 'awards' | 'volunteering' | 'publications' | 'interests' | 'custom';
+export type ExtraSectionLayout = 'entries' | 'list' | 'inline' | 'columns';
+
+export interface ExtraItem {
+  title: string;
+  subtitle: string;
+  date_start: string;
+  date_end: string;
+  location: string;
+  url: string;
+  bullets: string[];
+}
+
+export interface ExtraSection {
+  id: `x-${string}`;
+  kind: ExtraSectionKind;
+  title: string;
+  layout: ExtraSectionLayout;
+  items: ExtraItem[];
+}
+
+export const EXTRA_KIND_TITLES: Record<ExtraSectionKind, string> = {
+  projects: 'Projects',
+  languages: 'Languages',
+  awards: 'Awards & Honors',
+  volunteering: 'Volunteering',
+  publications: 'Publications',
+  interests: 'Interests',
+  custom: 'Additional',
+};
+
+export type ThemeCategory = 'classic' | 'modern' | 'technical' | 'executive' | 'minimal';
 export type HeaderAlign = 'left' | 'center';
 export type ContactLayout = 'inline' | 'stacked';
 export type SkillsLayout = 'categories' | 'inline';
@@ -146,6 +192,10 @@ export interface Typography {
   name_scale: number;
   line_spacing: number;
   uppercase_headings: boolean;
+  /** Section heading font; null uses the body font. */
+  heading_font_family?: string | null;
+  /** Heading letter spacing in em; null uses the built-in default. */
+  heading_tracking_em?: number | null;
 }
 
 export interface DesignColors {
@@ -211,8 +261,15 @@ export interface LayoutConfig {
   /** Icon vertical nudge (pt). Positive moves the icon down relative to the label. */
   contact_icon_offset_y_pt?: number;
   accent_rule: boolean;
+  /** Null keeps legacy designs: underline when `accent_rule`, else plain. */
+  heading_style?: HeadingStyle | null;
+  heading_align?: HeadingAlign;
   section_order: SectionId[];
   hidden_sections: SectionId[];
+}
+
+export function effectiveHeadingStyle(l: LayoutConfig): HeadingStyle {
+  return l.heading_style ?? (l.accent_rule ? 'underline' : 'plain');
 }
 
 export interface BoxSides {
@@ -253,6 +310,10 @@ export interface SectionOptions {
   experience_style: ExperienceStyle;
   education_style: EducationStyle;
   certificates_style: CertificatesStyle;
+  /** User renames of section headings, keyed by section id. */
+  titles?: Record<string, string>;
+  date_format?: DateFormat;
+  present_label?: string;
 }
 
 /** Per-design manual content override authored in the builder's Content panel.
@@ -303,6 +364,7 @@ export interface ResumeDesign {
   layout: LayoutConfig;
   sections: SectionOptions;
   content?: ResumeContent | null;
+  extra_sections?: ExtraSection[];
 }
 
 export interface ThemePreset {
@@ -310,6 +372,7 @@ export interface ThemePreset {
   label: string;
   description: string;
   accent_swatch: string;
+  category?: ThemeCategory;
   design: ResumeDesign;
   is_custom?: boolean;
   is_loved?: boolean;
@@ -329,7 +392,7 @@ export interface ColorPreset {
 }
 
 export interface SectionMeta {
-  id: SectionId;
+  id: CoreSectionId;
   label: string;
   description: string;
 }
@@ -425,10 +488,36 @@ export interface ResumeDesignResponse {
   resume_template_ready: boolean;
 }
 
-export const SECTION_LABELS: Record<SectionId, string> = {
+export const SECTION_LABELS: Record<CoreSectionId, string> = {
   summary: 'Professional Summary',
   skills: 'Technical Skills',
   experience: 'Work Experience',
   education: 'Education',
   certificates: 'Certifications',
 };
+
+export function extraDisplayTitle(section: ExtraSection): string {
+  return section.title.trim() || EXTRA_KIND_TITLES[section.kind];
+}
+
+/** Heading text for a section: the user's rename, else its own title. Mirrors `section_title`. */
+export function sectionTitle(design: Pick<ResumeDesign, 'sections' | 'extra_sections'>, id: SectionId): string {
+  const custom = design.sections.titles?.[id]?.trim();
+  if (custom) return custom;
+  if (isExtraSectionId(id)) {
+    const extra = design.extra_sections?.find((s) => s.id === id);
+    return extra ? extraDisplayTitle(extra) : 'Additional';
+  }
+  return SECTION_LABELS[id];
+}
+
+export function dateStyleOf(design: Pick<ResumeDesign, 'sections'>): { format: DateFormat; present: string } {
+  return {
+    format: design.sections.date_format ?? 'mon_yyyy',
+    present: design.sections.present_label?.trim() || 'Present',
+  };
+}
+
+export function emptyExtraItem(): ExtraItem {
+  return { title: '', subtitle: '', date_start: '', date_end: '', location: '', url: '', bullets: [] };
+}

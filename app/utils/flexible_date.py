@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from typing import Iterator, Literal
 
 MONTH_NAMES = (
     "Jan",
@@ -215,20 +218,61 @@ def coerce_flexible_date(raw: str | None) -> str | None:
     return _find_date_in_text(v)
 
 
+MONTH_FULL_NAMES = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+DateFormat = Literal["mon_yyyy", "month_yyyy", "mm_yyyy", "yyyy"]
+
+
+@dataclass(frozen=True)
+class DateStyle:
+    format: DateFormat = "mon_yyyy"
+    present: str = "Present"
+
+
+_DATE_STYLE: ContextVar[DateStyle] = ContextVar("resume_date_style", default=DateStyle())
+
+
+@contextmanager
+def date_style(fmt: str | None = None, present: str | None = None) -> Iterator[None]:
+    """Format every resume date in this block the way the design asks."""
+    token = _DATE_STYLE.set(
+        DateStyle(
+            format=fmt if fmt in ("mon_yyyy", "month_yyyy", "mm_yyyy", "yyyy") else "mon_yyyy",  # type: ignore[arg-type]
+            present=(present or "").strip() or "Present",
+        )
+    )
+    try:
+        yield
+    finally:
+        _DATE_STYLE.reset(token)
+
+
+def design_date_style(design) -> AbstractContextManager[None]:
+    sections = getattr(design, "sections", None)
+    return date_style(getattr(sections, "date_format", None), getattr(sections, "present_label", None))
+
+
 def format_flexible_date(raw: str | None, empty: str = "") -> str:
+    style = _DATE_STYLE.get()
     v = (raw or "").strip()
     if not v:
         return empty
-    if re.match(r"^present$", v, re.I):
-        return "Present"
+    if _PRESENT_RE.match(v):
+        return style.present
     parsed = parse_flexible_date(v)
     if not parsed:
         return v
     precision = parsed["precision"]
     year = parsed["year"]
-    if precision == "year":
+    if precision == "year" or style.format == "yyyy":
         return str(year)
-    mon = MONTH_NAMES[(parsed.get("month") or 1) - 1]
+    month = parsed.get("month") or 1
+    if style.format == "mm_yyyy":
+        return f"{month:02d}/{year}"
+    mon = MONTH_FULL_NAMES[month - 1] if style.format == "month_yyyy" else MONTH_NAMES[month - 1]
     if precision == "month":
         return f"{mon} {year}"
     return f"{mon} {parsed.get('day')}, {year}"
@@ -238,7 +282,8 @@ def format_flexible_period(start: str | None, end: str | None) -> str:
     s = format_flexible_date(start)
     e = format_flexible_date(end)
     if s and e:
-        return f"{s} - {e}"
+        # Year-only dates often coincide ("2021 - 2021"); show the year once.
+        return s if s == e and _DATE_STYLE.get().format == "yyyy" else f"{s} - {e}"
     if s:
-        return f"{s} - Present"
+        return f"{s} - {_DATE_STYLE.get().present}"
     return e or ""

@@ -1000,6 +1000,19 @@ html.dark:not(.landing-theme) .to-white\/90 { --tw-gradient-to: rgba(28, 36, 54,
   background-clip: padding-box;
 }
 
+/* Studio control panel: cards flow into two columns once the panel is wide enough. */
+.studio-panel-flow {
+  column-width: 18.5rem;
+  column-gap: 0.75rem;
+}
+.studio-panel-flow > * {
+  break-inside: avoid;
+  margin-bottom: 0.75rem;
+}
+.studio-panel-flow > [data-wide] {
+  column-span: all;
+}
+
 /* Thin horizontal scrollbar for the summary-style gallery */
 .summary-gallery {
   scrollbar-width: thin;

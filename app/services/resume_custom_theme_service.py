@@ -16,7 +16,11 @@ def snapshot_design_as_theme(design: ResumeDesign, *, theme_id: str) -> ResumeDe
     snap = design.model_copy(deep=True)
     snap.theme_id = theme_id
     snap.content = None
+    snap.extra_sections = []
+    snap.sections.titles = {}
     lay = snap.layout
+    lay.section_order = [s for s in lay.section_order if not s.startswith("x-")]
+    lay.hidden_sections = [s for s in lay.hidden_sections if not s.startswith("x-")]
     lay.header_image = None
     lay.photo = None
     lay.header_metrics = None
