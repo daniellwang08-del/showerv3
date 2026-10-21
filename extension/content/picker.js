@@ -2361,8 +2361,9 @@
       const isWb = !!(AF.workable && AF.workable.isWorkableApplicationPage && AF.workable.isWorkableApplicationPage());
       if (!isWb) return false;
       runExclusive(async () => {
-        const uploaded = AF.workable && AF.workable.writeResumeFile ? AF.workable.writeResumeFile(msg.file) : false;
-        return { uploaded: uploaded ? 1 : 0 };
+        if (!AF.workable || !AF.workable.uploadResume) return { uploaded: 0, reason: "no_engine" };
+        const res = await AF.workable.uploadResume(msg.file);
+        return { ...res, uploaded: res && res.uploaded ? 1 : 0 };
       }).then((res) => {
         try {
           sendResponse({ ok: true, ...(res || {}) });

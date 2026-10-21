@@ -107,6 +107,9 @@
           );
         }
       }
+      // Workable: once a resume is on file (a restored draft) the dropzone's
+      // generic label reads "Replace file", which would not map to the resume.
+      if (!label && root.getAttribute && root.getAttribute("data-ui") === "resume") label = "Resume";
       if (!label) label = labelForControl(root);
       // Pinpoint structured attachments: question title distinguishes Resume vs Cover Letter.
       if (!label && AF.pinpoint && AF.pinpoint.questionTitleFor) {
@@ -118,7 +121,6 @@
       }
       // Breezy: hidden #main-attachment resume upload.
       if (!label && (root.id === "main-attachment" || root.name === "cResume")) label = "Resume";
-      if (!label && root.getAttribute && root.getAttribute("data-ui") === "resume") label = "Resume";
       if (!label && (root.name === "resume" || root.id === "resume-upload-input")) label = "Resume/CV";
       // Manatal: placeholder="Resume" / .form-group label "Resume: *".
       if (!label && AF.manatal && AF.manatal.questionTitleFor) {

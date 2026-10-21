@@ -504,13 +504,19 @@ async function uploadLeverResumeLast(tabId, pending) {
   }
 }
 
+// Resolves once Workable has stored the file (or gave up). The content script
+// waits up to 45s for the upload; the race keeps a page that never answers
+// from stalling the whole run.
 async function uploadWorkableResumeLast(tabId, pending) {
-  if (!pending || !pending.file || tabId == null) return false;
+  if (!pending || !pending.file || tabId == null) return { uploaded: 0 };
   try {
-    const res = await tabSend(tabId, { type: "AF_WB_UPLOAD_RESUME", file: pending.file });
-    return !!(res && res.uploaded);
+    const res = await Promise.race([
+      tabSend(tabId, { type: "AF_WB_UPLOAD_RESUME", file: pending.file }),
+      delay(75_000).then(() => ({ uploaded: 0, reason: "no_reply" })),
+    ]);
+    return res || { uploaded: 0 };
   } catch {
-    return false;
+    return { uploaded: 0 };
   }
 }
 
@@ -1121,16 +1127,25 @@ async function fillCurrentPage(tabId, eng, ctx, isFirstPage) {
       setAutofill({ needsUser: ctx.needsUser });
     }
   }
-  if (isWorkable) {
-    if (workableResumePending) {
-      setAutofill({ runStatus: "Uploading your resume…" });
-      const ok = await uploadWorkableResumeLast(tabId, workableResumePending);
-      if (ok) {
-        debugLog("[autofill] Workable resume uploaded last");
-        markFileControlAttached(ctx, workableResumePending.cid);
-        await delay(1200);
-        await commitPrefilled(tabId);
-      }
+  if (isWorkable && workableResumePending) {
+    setAutofill({ runStatus: "Uploading your resume…" });
+    const res = await uploadWorkableResumeLast(tabId, workableResumePending);
+    debugLog("[autofill] Workable resume upload:", res);
+    const cid = workableResumePending.cid;
+    if (res.uploaded) {
+      markFileControlAttached(ctx, cid);
+      await commitPrefilled(tabId);
+    } else {
+      ctx.needsUser = ctx.needsUser.filter((x) => x.cid !== cid);
+      ctx.needsUser.push({
+        cid,
+        label: ctx.labelByCid[cid] || "Resume",
+        reason:
+          res.reason === "rejected" && res.error
+            ? `Upload manually - Workable rejected the file: ${res.error}`
+            : "Upload manually - Workable did not finish uploading the resume",
+      });
+      setAutofill({ needsUser: ctx.needsUser });
     }
   }
   if (isBreezy && breezyResumePending) {

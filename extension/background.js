@@ -102,8 +102,8 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
-// Per-engine content-script bundles, injected in dependency order: shared DOM
-// utils first (bootstraps window.__AF), then each component driver (self-
+// Per-engine content-script bundles, injected in dependency order: the hidden-
+// tab timer shim, shared DOM utils (bootstraps window.__AF), then each component driver (self-
 // registers), then the engine core, then the picker bridge. Classic content
 // scripts share one ISOLATED world per frame, so this is how the pieces find
 // each other. The file list order is preserved by executeScript; registration
@@ -113,6 +113,7 @@ const ENGINE_SCRIPTS = {
   // Greenhouse / generic best-effort: manual region selection + LLM, driven by
   // the platform-agnostic component drivers.
   greenhouse: [
+    "content/engine/timers.js",
     "content/engine/dom.js",
     "content/engine/greenhouse.js",
     "content/engine/pinpoint.js",
@@ -140,6 +141,7 @@ const ENGINE_SCRIPTS = {
   // profile to Workday's stable data-automation-id fields (no region selection,
   // no LLM). Order matters: dom primitives -> steps -> engine -> content entry.
   workday: [
+    "content/engine/timers.js",
     "content/workday/wd-dom.js",
     "content/workday/wd-steps.js",
     "content/workday/wd-engine.js",
@@ -160,6 +162,23 @@ const PENDING_JOB_KEY = "pendingWebappJob";
 
 attachJobSiteConnectHandlers();
 attachBrowserSync();
+
+// Timer service for content/engine/timers.js: hidden tabs throttle their own
+// timers, the service worker's are not.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "af-timers" || !port.sender || port.sender.id !== chrome.runtime.id) return;
+  port.onMessage.addListener((m) => {
+    if (!m || typeof m.id !== "number") return;
+    const ms = Math.min(Math.max(0, Number(m.ms) || 0), 60_000);
+    setTimeout(() => {
+      try {
+        port.postMessage({ id: m.id });
+      } catch {
+        /* tab closed or navigated */
+      }
+    }, ms);
+  });
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.type === "WEBAPP_EXTENSION_SESSION") {

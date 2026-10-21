@@ -400,25 +400,67 @@
     return document.querySelector('form[data-ui="application-form"] input[data-ui="resume"]');
   }
 
-  function writeResumeFile(fileData) {
+  // The dropzone around the resume input. After an upload Workable shows the
+  // file name ([data-id="filename"]) and a "view" link to the stored copy.
+  function resumeZone() {
     const el = resumeInput();
-    if (!el || !fileData || !fileData.base64) return false;
+    return (el && el.closest('[data-role="dropzone"]')) || null;
+  }
+
+  function resumeZoneState() {
+    const zone = resumeZone();
+    if (!zone) return { filename: "", viewHref: "", error: "" };
+    const nameEl = zone.querySelector('[data-id="filename"]');
+    const view = zone.querySelector('a[data-action="view"]');
+    let error = "";
+    const alert = zone.querySelector('[role="alert"], [data-ui="error"]');
+    if (alert) error = clean(alert.textContent);
+    return {
+      filename: nameEl ? String(nameEl.textContent || "").replace(/\s+/g, "") : "",
+      viewHref: view ? view.getAttribute("href") || "" : "",
+      error,
+    };
+  }
+
+  // Attach the resume and wait until Workable has stored it: selecting a file
+  // only starts the upload (signed URL request, then S3), and the form submits
+  // whatever the dropzone holds when the upload finishes.
+  async function uploadResume(fileData, { timeoutMs = 45000 } = {}) {
+    const el = resumeInput();
+    if (!el) return { uploaded: false, reason: "no_input" };
+    if (!fileData || !fileData.base64) return { uploaded: false, reason: "no_file" };
+    const name = fileData.filename || "resume.pdf";
+    const want = name.replace(/\s+/g, "");
+    const before = resumeZoneState();
+    // Workable ignores a new file named like the one it already stores (picked
+    // or dropped alike). Resume files are named per job, so a stored file with
+    // this exact name is this job's resume from an earlier attempt, restored
+    // with the draft.
+    if (before.filename === want && before.viewHref) return { uploaded: true, reused: true, filename: name };
     try {
       const bin = atob(fileData.base64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const file = new File([bytes], fileData.filename || "resume.pdf", {
-        type: fileData.mime || "application/pdf",
-      });
+      const file = new File([bytes], name, { type: fileData.mime || "application/pdf" });
       const dt = new DataTransfer();
       dt.items.add(file);
       el.files = dt.files;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
     } catch {
-      return false;
+      return { uploaded: false, reason: "attach_failed" };
     }
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      await new Promise((r) => setTimeout(r, 250));
+      const now = resumeZoneState();
+      if (now.error) return { uploaded: false, reason: "rejected", error: now.error.slice(0, 200), filename: name };
+      // When a restored draft already held a file, the replacement counts only
+      // once the stored copy's link changes.
+      const stored = now.viewHref ? now.viewHref !== before.viewHref : !before.filename;
+      if (now.filename === want && stored) return { uploaded: true, filename: name, ms: Date.now() - started };
+    }
+    return { uploaded: false, reason: "timeout", filename: name };
   }
 
   // Workable edu/exp editors are React-controlled. A bulk write + later textarea
@@ -577,7 +619,8 @@
     surveyGroupFilled,
     cidFor,
     resumeInput,
-    writeResumeFile,
+    resumeZoneState,
+    uploadResume,
     setEditorField,
     commitEditorFields,
     editorFieldInvalid,
