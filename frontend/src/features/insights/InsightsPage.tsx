@@ -32,6 +32,7 @@ import { useJobStats } from '@/features/jobs/queries';
 import { relativeTime } from '@/features/integrations/status';
 import { relativeAgo } from '@/features/interviews/interviewsModel';
 import { TEAM_KEY, teamActivityKey } from '@/features/team/teamModel';
+import { MY_SEARCH, TeamSpaceTabs } from '@/features/team/TeamSpaceTabs';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
@@ -285,6 +286,15 @@ export function InsightsPage() {
             </div>
             {member ? <MemberStrip entry={member} onBack={() => setSubject(ME)} /> : null}
           </header>
+          {roster.isLead ? (
+            <TeamSpaceTabs
+              label="Insights for"
+              spaces={roster.spaces.map((s) => s.space)}
+              leading={MY_SEARCH}
+              value={view.space?.id ?? MY_SEARCH}
+              onChange={(id) => setSubject(id === MY_SEARCH ? ME : { kind: 'team', spaceId: id })}
+            />
+          ) : null}
           {body}
         </div>
       </div>

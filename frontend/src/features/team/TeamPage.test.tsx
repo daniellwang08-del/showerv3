@@ -113,6 +113,45 @@ describe('TeamPage', () => {
     expect(screen.getByText('new@x.io')).toBeInTheDocument();
   });
 
+  it('labels the tab with the team name for a single space', async () => {
+    vi.mocked(fetchTeamOverview).mockResolvedValue(overview({ owned: [space] }));
+    renderPage();
+    const tabs = await screen.findByRole('tablist', { name: 'Your team spaces' });
+    expect(within(tabs).getAllByRole('tab').map((t) => t.textContent)).toEqual(['Backend squad1']);
+    expect(within(tabs).getByRole('tab', { name: /Backend squad/ })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('groups members and activity by team for a lead of several spaces', async () => {
+    const user = userEvent.setup();
+    const other: TeamSpaceSummary = { ...space, id: 's2', public_id: 'nao-11112222', name: 'Design crew' };
+    vi.mocked(fetchTeamOverview).mockResolvedValue(overview({ owned: [space, other] }));
+    vi.mocked(fetchTeamSpace).mockImplementation(async (id: string) =>
+      id === 's2'
+        ? {
+            ...detail,
+            space: other,
+            members: [{ ...detail.members[0], id: 'm2', name: 'Dana Designer', email: 'dana@x.io' }],
+          }
+        : detail,
+    );
+    renderPage();
+
+    const tabs = await screen.findByRole('tablist', { name: 'Your team spaces' });
+    expect(within(tabs).getByRole('tab', { name: /All teams/ })).toHaveAttribute('aria-selected', 'true');
+    expect(within(tabs).getByRole('tab', { name: /Design crew/ })).toBeInTheDocument();
+
+    const backend = await screen.findByRole('list', { name: 'Backend squad members' });
+    const design = screen.getByRole('list', { name: 'Design crew members' });
+    expect(within(backend).getByText('Max Member')).toBeInTheDocument();
+    expect(within(design).getByText('Dana Designer')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Backend squad activity' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Design crew activity' })).toBeInTheDocument();
+
+    await user.click(within(tabs).getByRole('tab', { name: /Design crew/ }));
+    expect(await screen.findByRole('list', { name: 'Team members' })).toHaveTextContent('Dana Designer');
+    expect(screen.queryByText('Max Member')).not.toBeInTheDocument();
+  });
+
   it('locks a member sharing default', async () => {
     const user = userEvent.setup();
     vi.mocked(fetchTeamOverview).mockResolvedValue(overview({ owned: [space] }));

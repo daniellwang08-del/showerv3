@@ -21,7 +21,8 @@ import { cn } from '@/lib/utils';
 import type { TeamInvite, TeamMembership } from '@/types/team';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { STORE_KEY, TEAM_OVERVIEW_KEY } from '../plans/storeModel';
-import { LeadSpacePanel } from './LeadSpacePanel';
+import { AllSpacesPanel, LeadSpacePanel } from './LeadSpacePanel';
+import { ALL_SPACES, TeamSpaceTabs } from './TeamSpaceTabs';
 import { TEAM_KEY } from './teamModel';
 import { TeamIdBadge } from './TeamIdBadge';
 
@@ -52,8 +53,13 @@ export function TeamPage() {
 
   const data = query.data;
   const owned = data.owned;
-  const selectedId = owned.find((s) => s.id === params.get('space'))?.id ?? owned[0]?.id ?? null;
+  const requested = params.get('space');
+  const multi = owned.length > 1;
+  const selectedId =
+    owned.find((s) => s.id === requested)?.id ?? (multi ? ALL_SPACES : (owned[0]?.id ?? null));
   const nothing = !owned.length && !data.membership && !data.invites.length;
+  const openSpace = (id: string) =>
+    setParams(id === ALL_SPACES ? {} : { space: id }, { replace: true });
 
   return (
     <PageLayout
@@ -69,29 +75,17 @@ export function TeamPage() {
 
         {owned.length ? (
           <section aria-label="Team spaces you lead" className="space-y-4">
-            {owned.length > 1 ? (
-              <div role="tablist" aria-label="Your team spaces" className="flex flex-wrap gap-1.5">
-                {owned.map((s) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={s.id === selectedId}
-                    onClick={() => setParams({ space: s.id }, { replace: true })}
-                    className={cn(
-                      'inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors',
-                      s.id === selectedId
-                        ? 'border-brand/40 bg-brand/10 text-brand'
-                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-                    )}
-                  >
-                    {s.name}
-                    <span className="text-xs tabular-nums opacity-70">{s.member_count}</span>
-                  </button>
-                ))}
-              </div>
+            <TeamSpaceTabs
+              spaces={owned}
+              value={selectedId ?? ''}
+              leading={multi ? ALL_SPACES : undefined}
+              onChange={openSpace}
+            />
+            {selectedId === ALL_SPACES ? (
+              <AllSpacesPanel spaces={owned} onOpenSpace={openSpace} />
+            ) : selectedId ? (
+              <LeadSpacePanel key={selectedId} spaceId={selectedId} />
             ) : null}
-            {selectedId ? <LeadSpacePanel key={selectedId} spaceId={selectedId} /> : null}
           </section>
         ) : null}
 

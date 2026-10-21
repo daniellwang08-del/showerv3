@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -127,7 +127,7 @@ function SpaceView({ detail }: { detail: TeamSpaceDetail }) {
           tone="bg-chart-2/10 text-chart-2"
         />
       </div>
-      <MembersCard spaceId={space.id} members={members} days={days} />
+      <MembersCard groups={[{ space, members }]} days={days} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <TeamActivityCard spaceId={space.id} hasMembers={members.length > 0} />
         <div className="space-y-4">
@@ -252,31 +252,54 @@ function RenameDialog({
   );
 }
 
-function MembersCard({ spaceId, members, days }: { spaceId: string; members: TeamMemberRow[]; days: number }) {
-  const [removing, setRemoving] = useState<TeamMemberRow | null>(null);
-  const refresh = useRefresh(spaceId);
+export type SpaceGroup = { space: TeamSpaceSummary; members: TeamMemberRow[] };
+
+const MEMBER_GRID =
+  'lg:grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,0.8fr))_minmax(0,1fr)_minmax(0,1.9fr)_auto]';
+
+/** One space's members, or several grouped under a heading per team. */
+function MembersCard({
+  groups,
+  days,
+  onOpenSpace,
+}: {
+  groups: SpaceGroup[];
+  days: number;
+  onOpenSpace?: (spaceId: string) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [removing, setRemoving] = useState<{ space: TeamSpaceSummary; member: TeamMemberRow } | null>(null);
   const remove = useMutation({
-    mutationFn: (m: TeamMemberRow) => removeTeamMember(spaceId, m.id),
-    onSuccess: (_res, m) => {
-      toast.success(`${m.name} was removed from the team`);
+    mutationFn: ({ space, member }: { space: TeamSpaceSummary; member: TeamMemberRow }) =>
+      removeTeamMember(space.id, member.id),
+    onSuccess: (_res, { space, member }) => {
+      toast.success(`${member.name} was removed from ${space.name}`);
       setRemoving(null);
-      refresh();
+      void queryClient.invalidateQueries({ queryKey: teamSpaceKey(space.id) });
+      void queryClient.invalidateQueries({ queryKey: [...TEAM_KEY, 'overview'] });
     },
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not remove the member.')),
   });
+  const grouped = groups.length > 1;
+  const total = groups.reduce((sum, g) => sum + g.members.length, 0);
   return (
     <SectionCard
       title="Members"
       icon={UsersRound}
       description={
-        members.length
-          ? `Activity over the last ${days} days. Sharing applies to jobs each member adds from now on.`
+        total
+          ? `Activity over the last ${days} days${grouped ? ', grouped by team' : ''}. Sharing applies to jobs each member adds from now on.`
           : undefined
       }
     >
-      {members.length ? (
+      {total || grouped ? (
         <>
-          <div className="hidden grid-cols-[minmax(0,2.2fr)_repeat(3,minmax(0,0.8fr))_minmax(0,1fr)_minmax(0,1.9fr)_auto] gap-3 border-b px-2 pb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase lg:grid">
+          <div
+            className={cn(
+              'hidden gap-3 border-b px-2 pb-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase lg:grid',
+              MEMBER_GRID,
+            )}
+          >
             <span>Member</span>
             <span className="text-right">Jobs added</span>
             <span className="text-right">Applied</span>
@@ -285,11 +308,22 @@ function MembersCard({ spaceId, members, days }: { spaceId: string; members: Tea
             <span>Job sharing</span>
             <span className="sr-only">Actions</span>
           </div>
-          <ul aria-label="Team members" className="divide-y">
-            {members.map((m) => (
-              <MemberRow key={m.id} spaceId={spaceId} member={m} onRemove={() => setRemoving(m)} />
-            ))}
-          </ul>
+          {groups.map(({ space, members }) => (
+            <section key={space.id} aria-label={grouped ? `${space.name} members` : undefined}>
+              {grouped ? (
+                <GroupHeading space={space} count={members.length} onOpen={onOpenSpace ? () => onOpenSpace(space.id) : undefined} />
+              ) : null}
+              {members.length ? (
+                <ul aria-label={grouped ? `${space.name} members` : 'Team members'} className="divide-y">
+                  {members.map((m) => (
+                    <MemberRow key={m.id} spaceId={space.id} member={m} onRemove={() => setRemoving({ space, member: m })} />
+                  ))}
+                </ul>
+              ) : (
+                <p className="px-2 py-3 text-sm text-muted-foreground">No members yet.</p>
+              )}
+            </section>
+          ))}
         </>
       ) : (
         <p className="py-6 text-center text-sm text-muted-foreground">
@@ -300,7 +334,10 @@ function MembersCard({ spaceId, members, days }: { spaceId: string; members: Tea
       <AlertDialog open={removing !== null} onOpenChange={(open) => !open && !remove.isPending && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Remove {removing?.member.name}
+              {grouped && removing ? ` from ${removing.space.name}` : ''}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               They leave the team, you stop seeing their activity, and any sharing lock you set is released. They need a new
               invitation to come back.
@@ -319,6 +356,87 @@ function MembersCard({ spaceId, members, days }: { spaceId: string; members: Tea
         </AlertDialogContent>
       </AlertDialog>
     </SectionCard>
+  );
+}
+
+function GroupHeading({ space, count, onOpen }: { space: TeamSpaceSummary; count: number; onOpen?: () => void }) {
+  return (
+    <div className="mt-3 flex items-center gap-2 rounded-lg bg-muted/50 px-2 py-1.5 first:mt-2">
+      <Crown className="size-3.5 shrink-0 text-amber-500" fill="currentColor" aria-hidden />
+      <h3 className="min-w-0 truncate text-sm font-semibold">{space.name}</h3>
+      <span className="font-mono text-[11px] text-muted-foreground">{space.public_id}</span>
+      <span className="text-xs text-muted-foreground">
+        {count} member{count === 1 ? '' : 's'}
+      </span>
+      {onOpen ? (
+        <Button variant="ghost" size="xs" className="ml-auto" onClick={onOpen}>
+          Open team
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Every space a lead runs on one screen: members and activity grouped by team. */
+export function AllSpacesPanel({
+  spaces,
+  onOpenSpace,
+}: {
+  spaces: TeamSpaceSummary[];
+  onOpenSpace: (spaceId: string) => void;
+}) {
+  const details = useQueries({
+    queries: spaces.map((space) => ({ queryKey: teamSpaceKey(space.id), queryFn: () => fetchTeamSpace(space.id) })),
+  });
+  if (details.some((d) => d.isPending)) {
+    return <Skeleton className="h-96 w-full rounded-2xl" aria-label="Loading team spaces" />;
+  }
+  const failed = details.filter((d) => d.isError);
+  if (failed.length) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Could not load every team space.{' '}
+        <button
+          type="button"
+          className="font-medium text-foreground underline"
+          onClick={() => failed.forEach((d) => void d.refetch())}
+        >
+          Try again
+        </button>
+      </p>
+    );
+  }
+  const loaded = details.map((d) => d.data).filter((d): d is TeamSpaceDetail => !!d);
+  const groups: SpaceGroup[] = loaded.map((d) => ({ space: d.space, members: d.members }));
+  const totals = teamTotals(groups.flatMap((g) => g.members));
+  const days = loaded[0]?.stats_days ?? 30;
+  const memberCount = groups.reduce((sum, g) => sum + g.members.length, 0);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <HeroStat icon={UsersRound} label={`Members in ${groups.length} teams`} value={fmt.format(memberCount)} />
+        <HeroStat
+          icon={BriefcaseBusiness}
+          label={`Jobs added, ${days} days`}
+          value={fmt.format(totals.jobsAdded)}
+          tone="bg-chart-4/10 text-chart-4"
+        />
+        <HeroStat
+          icon={ClipboardCheck}
+          label={`Applied, ${days} days`}
+          value={fmt.format(totals.applied)}
+          tone="bg-status-ready/15 text-status-ready"
+        />
+        <HeroStat
+          icon={CalendarClock}
+          label="Active interviews"
+          value={`${fmt.format(totals.activeInterviews)}${totals.upcoming ? ` (${totals.upcoming} upcoming)` : ''}`}
+          tone="bg-chart-2/10 text-chart-2"
+        />
+      </div>
+      <MembersCard groups={groups} days={days} onOpenSpace={onOpenSpace} />
+      <GroupedActivityCard groups={groups} />
+    </div>
   );
 }
 
@@ -565,19 +683,57 @@ function PolicyCard({ space }: { space: TeamSpaceSummary }) {
   );
 }
 
-export function TeamActivityCard({ spaceId, hasMembers }: { spaceId: string; hasMembers: boolean }) {
-  const query = useQuery({
+function useTeamActivity(spaceId: string, hasMembers: boolean) {
+  return useQuery({
     queryKey: teamActivityKey(spaceId),
     queryFn: () => fetchTeamActivity(spaceId),
     enabled: hasMembers,
     staleTime: 60_000,
   });
+}
+
+export function TeamActivityCard({ spaceId, hasMembers }: { spaceId: string; hasMembers: boolean }) {
+  const query = useTeamActivity(spaceId, hasMembers);
   return (
     <SectionCard
       title="Team activity"
       icon={Activity}
       description={query.data ? `Job adds, applications, and interview steps from the last ${query.data.days} days.` : undefined}
     >
+      <ActivityList spaceId={spaceId} hasMembers={hasMembers} />
+    </SectionCard>
+  );
+}
+
+function GroupedActivityCard({ groups }: { groups: SpaceGroup[] }) {
+  return (
+    <SectionCard
+      title="Team activity"
+      icon={Activity}
+      description="Job adds, applications, and interview steps, grouped by team."
+    >
+      <div className="grid gap-4 xl:grid-cols-2">
+        {groups.map(({ space, members }) => (
+          <section key={space.id} aria-label={`${space.name} activity`} className="min-w-0 rounded-xl border bg-background/40 p-2">
+            <div className="flex items-center gap-2 px-2 pt-1 pb-2">
+              <Crown className="size-3.5 shrink-0 text-amber-500" fill="currentColor" aria-hidden />
+              <h3 className="min-w-0 truncate text-sm font-semibold">{space.name}</h3>
+              <span className="text-xs text-muted-foreground">
+                {members.length} member{members.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <ActivityList spaceId={space.id} hasMembers={members.length > 0} label={`${space.name} activity`} />
+          </section>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function ActivityList({ spaceId, hasMembers, label = 'Team activity' }: { spaceId: string; hasMembers: boolean; label?: string }) {
+  const query = useTeamActivity(spaceId, hasMembers);
+  return (
+    <>
       {!hasMembers ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Activity appears here once members join.</p>
       ) : query.isPending ? (
@@ -589,7 +745,7 @@ export function TeamActivityCard({ spaceId, hasMembers }: { spaceId: string; has
       ) : query.isError ? (
         <p className="text-sm text-muted-foreground">Could not load activity.</p>
       ) : query.data.items.length ? (
-        <ul aria-label="Team activity" className="max-h-[28rem] space-y-1 overflow-y-auto pr-1">
+        <ul aria-label={label} className="max-h-[28rem] space-y-1 overflow-y-auto pr-1">
           {query.data.items.map((item) => (
             <li key={item.id} className="flex items-start gap-3 rounded-lg px-2 py-2 hover:bg-muted/40">
               <span className={cn('mt-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-lg', activityTone(item))}>
@@ -615,6 +771,6 @@ export function TeamActivityCard({ spaceId, hasMembers }: { spaceId: string; has
       ) : (
         <p className="py-6 text-center text-sm text-muted-foreground">Nothing in this window yet.</p>
       )}
-    </SectionCard>
+    </>
   );
 }

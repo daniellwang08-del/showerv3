@@ -442,6 +442,22 @@ describe('InsightsPage', () => {
       await waitFor(() => expect(fetchStats).toHaveBeenCalledWith('u3'));
     });
 
+    it('switches between your search and each team space from the team tabs', async () => {
+      const user = userEvent.setup();
+      leadOf();
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage();
+
+      const tabs = await screen.findByRole('tablist', { name: 'Insights for' });
+      expect(within(tabs).getByRole('tab', { name: /You/ })).toHaveAttribute('aria-selected', 'true');
+      await user.click(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) }));
+      expect(await screen.findByRole('region', { name: 'Team totals' })).toBeInTheDocument();
+      expect(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) })).toHaveAttribute('aria-selected', 'true');
+
+      await user.click(within(tabs).getByRole('tab', { name: /You/ }));
+      expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument();
+    });
+
     it('falls back to your own insights for a member you do not lead', async () => {
       leadOf();
       fetchStats.mockResolvedValue(makeStats());
