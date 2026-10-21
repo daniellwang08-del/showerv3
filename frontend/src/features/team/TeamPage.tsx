@@ -79,7 +79,7 @@ export function TeamPage() {
             <TeamSpaceTabs
               spaces={owned}
               value={selectedId ?? ''}
-              leading={multi ? ALL_SPACES : undefined}
+              leading={multi ? [ALL_SPACES] : []}
               onChange={openSpace}
             />
             {selectedId === ALL_SPACES ? (

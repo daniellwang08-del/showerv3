@@ -10,34 +10,36 @@ type Extra = typeof ALL_SPACES | typeof MY_SEARCH;
 
 /**
  * Navigation tabs over the spaces a lead runs, each labelled with the team
- * name. ``leading`` adds a first tab: every team together, or the lead's own search.
+ * name. ``leading`` adds tabs before them: the lead's own search and/or every team together.
  */
 export function TeamSpaceTabs({
   spaces,
   value,
   onChange,
-  leading,
+  leading = [],
   label = 'Your team spaces',
 }: {
   spaces: TeamSpaceSummary[];
   value: string;
   onChange: (value: string) => void;
-  leading?: Extra;
+  leading?: Extra[];
   label?: string;
 }) {
   return (
     <nav aria-label={label} className="scrollbar-thin -mx-1 overflow-x-auto px-1">
       <div role="tablist" aria-label={label} className="flex min-w-max gap-1 border-b">
-        {leading === ALL_SPACES ? (
-          <Tab active={value === ALL_SPACES} onClick={() => onChange(ALL_SPACES)} icon={<LayoutGrid className="size-3.5" />}>
-            All teams
-            <Count n={spaces.reduce((sum, s) => sum + s.member_count, 0)} />
-          </Tab>
-        ) : leading === MY_SEARCH ? (
-          <Tab active={value === MY_SEARCH} onClick={() => onChange(MY_SEARCH)} icon={<UserRound className="size-3.5" />}>
-            You
-          </Tab>
-        ) : null}
+        {leading.map((extra) =>
+          extra === ALL_SPACES ? (
+            <Tab key={extra} active={value === ALL_SPACES} onClick={() => onChange(ALL_SPACES)} icon={<LayoutGrid className="size-3.5" />}>
+              All teams
+              <Count n={spaces.reduce((sum, s) => sum + s.member_count, 0)} />
+            </Tab>
+          ) : (
+            <Tab key={extra} active={value === MY_SEARCH} onClick={() => onChange(MY_SEARCH)} icon={<UserRound className="size-3.5" />}>
+              You
+            </Tab>
+          ),
+        )}
         {spaces.map((s) => (
           <Tab
             key={s.id}

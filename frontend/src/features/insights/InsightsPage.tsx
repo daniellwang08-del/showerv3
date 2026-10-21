@@ -32,7 +32,6 @@ import { useJobStats } from '@/features/jobs/queries';
 import { relativeTime } from '@/features/integrations/status';
 import { relativeAgo } from '@/features/interviews/interviewsModel';
 import { TEAM_KEY, teamActivityKey } from '@/features/team/teamModel';
-import { MY_SEARCH, TeamSpaceTabs } from '@/features/team/TeamSpaceTabs';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useScraperStore } from '@/stores/scraperStore';
 import { useShellStore } from '@/stores/shellStore';
@@ -40,7 +39,7 @@ import { cn } from '@/lib/utils';
 import type { ScraperStats } from '@/types/scraper';
 import { InboxApplicationsCard, useMailApplications } from './InboxApplicationsCard';
 import {
-  ME,
+  defaultSubject,
   parseSubject,
   resolveSubject,
   SUBJECT_PARAM,
@@ -49,7 +48,8 @@ import {
   type InsightsSubject,
   type RosterMember,
 } from './insightsSubject';
-import { MemberAvatar, SubjectPicker } from './SubjectPicker';
+import { AllTeamsView, LeadNavigator } from './LeadInsights';
+import { MemberAvatar } from './MemberAvatar';
 import { TeamInsightsView } from './TeamInsightsView';
 import type { ActivitySeries, TrendSeries } from './InsightsCharts';
 import {
@@ -132,10 +132,15 @@ export function InsightsPage() {
   const reduceMotion = usePrefersReducedMotion();
   const [params, setParams] = useSearchParams();
   const roster = useLeadRoster();
-  const view = resolveSubject(parseSubject(params.get(SUBJECT_PARAM)), roster);
+  const raw = params.get(SUBJECT_PARAM);
+  const requested = raw ? parseSubject(raw) : roster.isLead ? defaultSubject(roster.spaces) : parseSubject(null);
+  const resolved = resolveSubject(requested, roster);
+  const view = !raw && roster.overviewLoading ? { ...resolved, pending: true } : resolved;
   const member = view.member;
   const memberId = member?.member.id;
   const teamView = view.subject.kind === 'team' ? view.space : null;
+  const allTeams = view.subject.kind === 'teams';
+  const leadView = !!teamView || allTeams;
 
   const stats = useJobStats(memberId);
   const [days, setDays] = useState<(typeof RANGES)[number]>(7);
@@ -143,7 +148,7 @@ export function InsightsPage() {
     queryKey: memberId ? ['jobs', 'weekly-progress', days, 'member', memberId] : ['jobs', 'weekly-progress', days],
     queryFn: () => (memberId ? fetchWeeklyProgress(days, memberId) : fetchWeeklyProgress(days)),
     staleTime: 60_000,
-    enabled: !teamView && !!stats.data && !isEmptyPool(stats.data),
+    enabled: !leadView && !!stats.data && !isEmptyPool(stats.data),
   });
   const inbox = useMailApplications(30, memberId);
   const inboxToday = inbox.data?.connected ? inbox.data.totals.today : null;
@@ -152,7 +157,7 @@ export function InsightsPage() {
     setParams(
       (prev) => {
         const out = new URLSearchParams(prev);
-        if (next.kind === 'me') out.delete(SUBJECT_PARAM);
+        if (next.kind === 'me' && !roster.isLead) out.delete(SUBJECT_PARAM);
         else out.set(SUBJECT_PARAM, subjectValue(next));
         return out;
       },
@@ -166,6 +171,10 @@ export function InsightsPage() {
   };
 
   const refresh = () => {
+    if (allTeams) {
+      void queryClient.invalidateQueries({ queryKey: TEAM_KEY });
+      return;
+    }
     if (teamView) {
       void queryClient.invalidateQueries({ queryKey: [...TEAM_KEY, 'insights', teamView.id] });
       void queryClient.invalidateQueries({ queryKey: teamActivityKey(teamView.id) });
@@ -177,15 +186,25 @@ export function InsightsPage() {
   };
 
   const updatedAt =
-    !teamView && stats.dataUpdatedAt
+    !leadView && stats.dataUpdatedAt
       ? new Date(stats.dataUpdatedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       : null;
-  const refreshing = teamView
-    ? queryClient.isFetching({ queryKey: [...TEAM_KEY, 'insights', teamView.id] }) > 0
-    : stats.isFetching;
+  const refreshing = allTeams
+    ? queryClient.isFetching({ queryKey: TEAM_KEY }) > 0
+    : teamView
+      ? queryClient.isFetching({ queryKey: [...TEAM_KEY, 'insights', teamView.id] }) > 0
+      : stats.isFetching;
 
   let body;
-  if (view.pending) body = <InsightsSkeleton />;
+  if (view.pending || (allTeams && roster.loading)) body = <InsightsSkeleton />;
+  else if (allTeams)
+    body = (
+      <AllTeamsView
+        spaces={roster.spaces}
+        onOpenTeam={(id) => setSubject({ kind: 'team', spaceId: id })}
+        onOpenMember={(id) => setSubject({ kind: 'member', memberId: id })}
+      />
+    );
   else if (teamView)
     body = (
       <TeamInsightsView
@@ -227,9 +246,11 @@ export function InsightsPage() {
       />
     );
 
-  const description = teamView
-    ? `How everyone in ${teamView.name} is progressing. Pick a member to see their numbers in full.`
-    : member
+  const description = allTeams
+    ? `Every team you lead at a glance: ${roster.spaces.length} teams, their members and momentum. Open a team or a member for detail.`
+    : teamView
+      ? `How everyone in ${teamView.name} is progressing. Pick a member below to see their numbers in full.`
+      : member
       ? `${member.member.name}'s pipeline, match quality and momentum, read only.`
       : 'Your pipeline, match quality and momentum. Select any number to open those jobs.';
 
@@ -264,9 +285,6 @@ export function InsightsPage() {
                 <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {roster.isLead ? (
-                  <SubjectPicker value={view.subject} spaces={roster.spaces} member={member} onChange={setSubject} />
-                ) : null}
                 {updatedAt ? (
                   <span className="hidden rounded-full border border-border/60 bg-background/60 px-2.5 py-1 text-xs text-muted-foreground backdrop-blur sm:inline">
                     Updated {updatedAt}
@@ -284,15 +302,16 @@ export function InsightsPage() {
                 </Button>
               </div>
             </div>
-            {member ? <MemberStrip entry={member} onBack={() => setSubject(ME)} /> : null}
+            {member ? (
+              <MemberStrip entry={member} onBack={() => setSubject({ kind: 'team', spaceId: member.space.id })} />
+            ) : null}
           </header>
           {roster.isLead ? (
-            <TeamSpaceTabs
-              label="Insights for"
-              spaces={roster.spaces.map((s) => s.space)}
-              leading={MY_SEARCH}
-              value={view.space?.id ?? MY_SEARCH}
-              onChange={(id) => setSubject(id === MY_SEARCH ? ME : { kind: 'team', spaceId: id })}
+            <LeadNavigator
+              spaces={roster.spaces}
+              subject={view.subject}
+              activeSpaceId={view.space?.id ?? null}
+              onChange={setSubject}
             />
           ) : null}
           {body}
@@ -789,7 +808,7 @@ function MemberStrip({ entry, onBack }: { entry: RosterMember; onBack: () => voi
           <FileBarChart /> Full report
         </Link>
         <Button variant="ghost" size="sm" className="rounded-full" onClick={onBack}>
-          <ArrowLeft /> Back to you
+          <ArrowLeft /> Back to {space.name}
         </Button>
       </div>
     </div>

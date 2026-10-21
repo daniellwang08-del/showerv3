@@ -7,23 +7,34 @@ import type { TeamMemberRow, TeamSpaceSummary } from '@/types/team';
 /** Whose numbers the Insights page shows. Kept in `?view=` so a view can be linked. */
 export type InsightsSubject =
   | { kind: 'me' }
+  | { kind: 'teams' }
   | { kind: 'team'; spaceId: string }
   | { kind: 'member'; memberId: string };
 
 export const SUBJECT_PARAM = 'view';
 export const ME: InsightsSubject = { kind: 'me' };
+export const ALL_TEAMS: InsightsSubject = { kind: 'teams' };
 
 export function parseSubject(raw: string | null): InsightsSubject {
   const [kind, id] = (raw ?? '').split(':', 2);
+  if (kind === 'teams') return ALL_TEAMS;
   if (kind === 'team' && id) return { kind: 'team', spaceId: id };
   if (kind === 'member' && id) return { kind: 'member', memberId: id };
   return ME;
 }
 
 export function subjectValue(subject: InsightsSubject): string {
+  if (subject.kind === 'teams') return 'teams';
   if (subject.kind === 'team') return `team:${subject.spaceId}`;
   if (subject.kind === 'member') return `member:${subject.memberId}`;
   return 'me';
+}
+
+/** Where a lead lands without a ``?view=``: their teams, not their own search. */
+export function defaultSubject(spaces: RosterSpace[]): InsightsSubject {
+  if (spaces.length > 1) return ALL_TEAMS;
+  if (spaces.length === 1) return { kind: 'team', spaceId: spaces[0].space.id };
+  return ME;
 }
 
 export function memberInsightsPath(memberId: string): string {
@@ -52,6 +63,7 @@ export function useLeadRoster() {
   return {
     isLead: owned.length > 0,
     spaces,
+    overviewLoading: overview.isPending,
     loading: overview.isPending || details.some((d) => d.isPending),
   };
 }
@@ -73,7 +85,9 @@ export function resolveSubject(
   subject: InsightsSubject,
   roster: { spaces: RosterSpace[]; loading: boolean },
 ): { subject: InsightsSubject; member: RosterMember | null; space: TeamSpaceSummary | null; pending: boolean } {
-  if (subject.kind === 'team') {
+  if (subject.kind === 'teams') {
+    if (roster.spaces.length) return { subject, member: null, space: null, pending: false };
+  } else if (subject.kind === 'team') {
     const space = roster.spaces.find((s) => s.space.id === subject.spaceId)?.space ?? null;
     if (space) return { subject, member: null, space, pending: false };
   } else if (subject.kind === 'member') {

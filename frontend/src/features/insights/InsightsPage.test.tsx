@@ -380,12 +380,52 @@ describe('InsightsPage', () => {
   });
 
   describe('team lead views', () => {
-    it('hides the picker for anyone who leads no team', async () => {
+    it('hides the team navigation for anyone who leads no team', async () => {
       fetchStats.mockResolvedValue(makeStats());
       renderPage();
       await screen.findByRole('region', { name: 'Today' });
       await waitFor(() => expect(fetchOverview).toHaveBeenCalled());
-      expect(screen.queryByRole('combobox', { name: 'Show insights for' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('tablist', { name: 'Insights for' })).not.toBeInTheDocument();
+    });
+
+    it('opens a lead on their team, not their own search', async () => {
+      leadOf();
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage();
+      expect(await screen.findByRole('region', { name: 'Team totals' })).toBeInTheDocument();
+      const tabs = screen.getByRole('tablist', { name: 'Insights for' });
+      expect(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) })).toHaveAttribute('aria-selected', 'true');
+      const chips = screen.getByRole('tablist', { name: `Members of ${SPACE.name}` });
+      expect(within(chips).getByRole('tab', { name: /Whole team/ })).toHaveAttribute('aria-selected', 'true');
+      expect(within(chips).getByRole('tab', { name: /Pat Lee/ })).toBeInTheDocument();
+    });
+
+    it('shows every team side by side for a lead of several', async () => {
+      const user = userEvent.setup();
+      const other = { ...SPACE, id: 's2', public_id: 'nao-87654321', name: 'Design crew', member_count: 1 };
+      fetchOverview.mockResolvedValue({ owned: [SPACE, other], memberships: [], invites: [], team_packages_held: 0 });
+      fetchSpace.mockImplementation(async (id: string) =>
+        id === 's2'
+          ? { space: other, members: [{ ...MEMBERS[0], id: 'u9', name: 'Dana Designer' }], invites: [], stats_days: 30 }
+          : { space: SPACE, members: MEMBERS, invites: [], stats_days: 30 },
+      );
+      fetchStats.mockResolvedValue(makeStats());
+      renderPage();
+
+      const teams = await screen.findByRole('region', { name: 'Teams' });
+      expect(within(teams).getByRole('article', { name: SPACE.name })).toBeInTheDocument();
+      expect(within(teams).getByRole('article', { name: 'Design crew' })).toBeInTheDocument();
+      expect(screen.getByRole('list', { name: 'Design crew members' })).toHaveTextContent('Dana Designer');
+      expect(within(screen.getByRole('tablist', { name: 'Insights for' })).getByRole('tab', { name: /All teams/ })).toHaveAttribute(
+        'aria-selected',
+        'true',
+      );
+
+      await user.click(screen.getByRole('button', { name: "View Dana Designer's insights" }));
+      expect(await screen.findByRole('group', { name: 'Viewing Dana Designer' })).toBeInTheDocument();
+      await waitFor(() => expect(fetchStats).toHaveBeenCalledWith('u9'));
+      const chips = screen.getByRole('tablist', { name: 'Members of Design crew' });
+      expect(within(chips).getByRole('tab', { name: /Dana Designer/ })).toHaveAttribute('aria-selected', 'true');
     });
 
     it('lets a lead pick a member and shows their numbers read only', async () => {
@@ -399,8 +439,8 @@ describe('InsightsPage', () => {
         }),
       );
       renderPage();
-      await user.click(await screen.findByRole('combobox', { name: 'Show insights for' }));
-      await user.click(await screen.findByRole('option', { name: /Pat Lee/ }));
+      const chips = await screen.findByRole('tablist', { name: `Members of ${SPACE.name}` });
+      await user.click(within(chips).getByRole('tab', { name: /Pat Lee/ }));
 
       expect(await screen.findByRole('group', { name: 'Viewing Pat Lee' })).toBeInTheDocument();
       await waitFor(() => expect(fetchStats).toHaveBeenCalledWith('u2'));
@@ -415,8 +455,9 @@ describe('InsightsPage', () => {
       expect(within(card).queryByRole('link')).not.toBeInTheDocument();
       expect(screen.getByRole('link', { name: /Full report/ })).toHaveAttribute('href', '/app/team/s1/members/u2');
 
-      await user.click(screen.getByRole('button', { name: /Back to you/ }));
+      await user.click(screen.getByRole('button', { name: `Back to ${SPACE.name}` }));
       expect(screen.queryByRole('group', { name: 'Viewing Pat Lee' })).not.toBeInTheDocument();
+      expect(await screen.findByRole('region', { name: 'Team totals' })).toBeInTheDocument();
     });
 
     it('opens the whole-team view from the link and drills into a member', async () => {
@@ -449,13 +490,12 @@ describe('InsightsPage', () => {
       renderPage();
 
       const tabs = await screen.findByRole('tablist', { name: 'Insights for' });
-      expect(within(tabs).getByRole('tab', { name: /You/ })).toHaveAttribute('aria-selected', 'true');
-      await user.click(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) }));
-      expect(await screen.findByRole('region', { name: 'Team totals' })).toBeInTheDocument();
-      expect(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) })).toHaveAttribute('aria-selected', 'true');
-
       await user.click(within(tabs).getByRole('tab', { name: /You/ }));
       expect(await screen.findByRole('region', { name: 'Today' })).toBeInTheDocument();
+      expect(within(tabs).getByRole('tab', { name: /You/ })).toHaveAttribute('aria-selected', 'true');
+
+      await user.click(within(tabs).getByRole('tab', { name: new RegExp(SPACE.name) }));
+      expect(await screen.findByRole('region', { name: 'Team totals' })).toBeInTheDocument();
     });
 
     it('falls back to your own insights for a member you do not lead', async () => {

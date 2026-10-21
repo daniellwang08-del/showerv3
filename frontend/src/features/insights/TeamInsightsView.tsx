@@ -23,7 +23,7 @@ import { relativeAgo } from '@/features/interviews/interviewsModel';
 import { TeamActivityCard } from '@/features/team/LeadSpacePanel';
 import { TEAM_KEY } from '@/features/team/teamModel';
 import type { ChartSeries, TeamChartRow } from './InsightsCharts';
-import { MemberAvatar } from './SubjectPicker';
+import { MemberAvatar } from './MemberAvatar';
 
 const TeamChart = lazy(() => import('./InsightsCharts').then((m) => ({ default: m.TeamChart })));
 
