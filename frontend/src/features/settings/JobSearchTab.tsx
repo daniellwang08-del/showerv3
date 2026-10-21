@@ -165,7 +165,7 @@ export function JobSearchTab({
         title="When you add jobs"
         description={
           settings.job_share_locked
-            ? `Your team lead set this for ${settings.team_space_name ?? 'your team'}. Jobs you add are always stored with this sharing.`
+            ? `Set by your team lead (${settings.team_space_name ?? 'your team'}). Jobs you add are always stored with this sharing.`
             : 'Every job you add is stored with this sharing. You can change it later for a single add from the sidebar history.'
         }
         actions={

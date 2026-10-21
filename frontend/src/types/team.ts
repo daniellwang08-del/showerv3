@@ -32,12 +32,12 @@ export interface TeamInvite {
   created_at: string | null;
   space: TeamSpaceSummary | null;
   has_account?: boolean;
-  in_other_team?: boolean;
 }
 
 export interface TeamOverview {
   owned: TeamSpaceSummary[];
-  membership: TeamMembership | null;
+  /** Every space the user is a member of, oldest first. */
+  memberships: TeamMembership[];
   invites: TeamInvite[];
   team_packages_held: number;
 }

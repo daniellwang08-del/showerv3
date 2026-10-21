@@ -296,17 +296,54 @@ def test_invite_for_another_email_is_not_found():
         run(team_service.respond_invite(_Session(objects={"i1": invite}), _user(), "i1", accept=True))
 
 
-def test_accepting_while_on_another_team_is_refused():
+def test_a_member_can_join_a_second_team():
     invite = TeamInvite(id="i1", team_space_id="s2", email="me@example.com", status="pending")
     target = TeamSpace(id="s2", public_id="nao-00000002", name="New", owner_user_id="lead2")
     current = TeamSpace(id="s1", public_id="nao-00000001", name="Old", owner_user_id="lead1")
     session = _Session(
-        _Result(rows=[(TeamMember(user_id="u1", team_space_id="s1"), current)]),
-        objects={"i1": invite, "s2": target},
+        _Result(rows=[(TeamMember(user_id="u1", team_space_id="s1", share_locked=False), current)]),
+        objects={"i1": invite, "s2": target, "lead2": _user("lead2", "l2@x.io")},
     )
-    with pytest.raises(team_service.TeamError, match="Leave it first"):
-        run(team_service.respond_invite(session, _user(), "i1", accept=True))
-    assert invite.status == "pending"
+    out = run(team_service.respond_invite(session, _user(), "i1", accept=True))
+    assert out["status"] == "accepted" and out["space"]["id"] == "s2"
+    (member,) = [o for o in session.added if isinstance(o, TeamMember)]
+    assert member.team_space_id == "s2"
+    assert invite.status == "accepted"
+
+
+def test_a_sharing_lock_from_another_team_is_kept_on_joining():
+    invite = TeamInvite(id="i1", team_space_id="s2", email="me@example.com", status="pending")
+    target = TeamSpace(
+        id="s2", public_id="nao-00000002", name="New", owner_user_id="lead2", default_share_scope="all"
+    )
+    current = TeamSpace(id="s1", public_id="nao-00000001", name="Old", owner_user_id="lead1")
+    me = _user(job_share_default="team")
+    session = _Session(
+        _Result(rows=[(TeamMember(user_id="u1", team_space_id="s1", share_locked=True), current)]),
+        objects={"i1": invite, "s2": target, "lead2": _user("lead2", "l2@x.io")},
+    )
+    run(team_service.respond_invite(session, me, "i1", accept=True))
+    assert me.job_share_default == "team"
+
+
+def test_accepting_a_team_you_are_already_on_adds_no_row():
+    invite = TeamInvite(id="i1", team_space_id="s1", email="me@example.com", status="pending")
+    space = TeamSpace(id="s1", public_id="nao-00000001", name="T", owner_user_id="lead")
+    session = _Session(
+        _Result(rows=[(TeamMember(user_id="u1", team_space_id="s1"), space)]),
+        objects={"i1": invite, "s1": space, "lead": _user("lead", "l@x.io")},
+    )
+    assert run(team_service.respond_invite(session, _user(), "i1", accept=True))["status"] == "accepted"
+    assert not [o for o in session.added if isinstance(o, TeamMember)]
+    assert invite.status == "accepted"
+
+
+def test_leaving_one_team_needs_that_membership():
+    with pytest.raises(team_service.TeamNotFound):
+        run(team_service.leave(_Session(_Result(rowcount=0)), _user(), "s9"))
+    session = _Session(_Result(rowcount=1))
+    run(team_service.leave(session, _user(), "s1"))
+    assert session.flushed == 1
 
 
 def test_accepting_applies_the_space_sharing_policy():
@@ -337,9 +374,16 @@ def test_declining_marks_the_invite():
 
 
 def test_locked_scope_reads_the_members_default():
-    assert run(team_service.locked_share_scope(_Session(_Result(rows=[(True, "all")])), "u1")) == "all"
-    assert run(team_service.locked_share_scope(_Session(_Result(rows=[(False, "all")])), "u1")) is None
+    assert run(team_service.locked_share_scope(_Session(_Result(rows=[("all",)])), "u1")) == "all"
+    assert run(team_service.locked_share_scope(_Session(_Result(rows=[("bogus",)])), "u1")) == "private"
     assert run(team_service.locked_share_scope(_Session(_Result(rows=[])), "u1")) is None
+
+
+def test_lock_info_names_every_team_that_locked_it():
+    rows = [("Sales", "nao-00000001"), ("Growth", "nao-00000002")]
+    info = run(team_service.sharing_lock_info(_Session(_Result(rows=rows)), "u1"))
+    assert info == {"job_share_locked": True, "team_space_name": "Sales, Growth", "team_space_public_id": "nao-00000001"}
+    assert run(team_service.sharing_lock_info(_Session(_Result(rows=[])), "u1"))["job_share_locked"] is False
 
 
 def test_team_visibility_is_scoped_to_shared_spaces():

@@ -47,7 +47,7 @@ const space: TeamSpaceSummary = {
 
 const overview = (over: Partial<TeamOverview> = {}): TeamOverview => ({
   owned: [],
-  membership: null,
+  memberships: [],
   invites: [],
   team_packages_held: 0,
   ...over,
@@ -208,29 +208,37 @@ describe('TeamPage', () => {
     await waitFor(() => expect(respondToTeamInvite).toHaveBeenCalledWith('i9', true));
   });
 
-  it('blocks accepting while already on a team', async () => {
+  it('lets someone already on a team accept another', async () => {
     vi.mocked(fetchTeamOverview).mockResolvedValue(
       overview({
-        membership: { ...space, id: 's0', name: 'Current team', joined_at: null, share_locked: true },
+        memberships: [{ ...space, id: 's0', name: 'Current team', joined_at: null, share_locked: true }],
         invites: [{ id: 'i9', email: 'me@x.io', status: 'pending', created_at: null, space }],
       }),
     );
     renderPage();
-    expect(await screen.findByRole('button', { name: /Accept/ })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /Accept/ })).toBeEnabled();
     expect(screen.getByText(/Your lead set how the jobs you add are shared/)).toBeInTheDocument();
   });
 
-  it('lets a member leave after confirming', async () => {
+  it('lists every team the member is on and leaves only the chosen one', async () => {
     const user = userEvent.setup();
     vi.mocked(fetchTeamOverview).mockResolvedValue(
-      overview({ membership: { ...space, joined_at: null, share_locked: false } }),
+      overview({
+        memberships: [
+          { ...space, joined_at: null, share_locked: false },
+          { ...space, id: 's2', public_id: 'nao-11112222', name: 'Design crew', joined_at: null, share_locked: false },
+        ],
+      }),
     );
     vi.mocked(leaveTeam).mockResolvedValue();
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /Leave team/ }));
+    expect(await screen.findByText('You are on 2 teams.', { exact: false })).toBeInTheDocument();
+    expect(screen.getByText('Backend squad')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Leave Design crew' }));
     const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Leave Design crew?');
     await user.click(within(dialog).getByRole('button', { name: 'Leave team' }));
-    await waitFor(() => expect(leaveTeam).toHaveBeenCalled());
+    await waitFor(() => expect(leaveTeam).toHaveBeenCalledWith('s2'));
   });
 });
 

@@ -62,7 +62,7 @@ describe('account menu', () => {
   beforeEach(() => overview.mockReset());
 
   it('crowns a team lead', async () => {
-    overview.mockResolvedValue({ owned: [{ id: 's1' }], membership: null, invites: [], team_packages_held: 0 } as never);
+    overview.mockResolvedValue({ owned: [{ id: 's1' }], memberships: [], invites: [], team_packages_held: 0 } as never);
     const Wrapper = wrapper();
     render(
       <Wrapper>
@@ -74,7 +74,7 @@ describe('account menu', () => {
   });
 
   it('shows no crown for members and admins', async () => {
-    overview.mockResolvedValue({ owned: [], membership: null, invites: [], team_packages_held: 0 });
+    overview.mockResolvedValue({ owned: [], memberships: [], invites: [], team_packages_held: 0 });
     const Wrapper = wrapper();
     render(
       <Wrapper>

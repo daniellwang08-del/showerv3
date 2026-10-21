@@ -134,32 +134,37 @@ async def teammate_ids(session: AsyncSession, user_id: str) -> set[str]:
 
 
 async def locked_share_scope(session: AsyncSession, user_id: str) -> str | None:
-    """The sharing a lead pinned for this member, or None when the member chooses."""
+    """The sharing a lead pinned for this member, or None when the member chooses.
+
+    Locked on any team means locked; the value is the member's one setting.
+    """
     row = (
         await session.execute(
-            select(TeamMember.share_locked, User.job_share_default)
-            .join(User, User.id == TeamMember.user_id)
-            .where(TeamMember.user_id == user_id)
+            select(User.job_share_default)
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .where(TeamMember.user_id == user_id, TeamMember.share_locked.is_(True))
+            .limit(1)
         )
     ).first()
-    if row is None or not row[0]:
+    if row is None:
         return None
-    value = str(row[1] or "private").strip().lower()
+    value = str(row[0] or "private").strip().lower()
     return value if value in SHARE_DEFAULTS else "private"
 
 
 async def sharing_lock_info(session: AsyncSession, user_id: str) -> dict[str, Any]:
-    row = (
+    rows = (
         await session.execute(
-            select(TeamMember.share_locked, TeamSpace.name, TeamSpace.public_id)
-            .join(TeamSpace, TeamSpace.id == TeamMember.team_space_id)
-            .where(TeamMember.user_id == user_id)
+            select(TeamSpace.name, TeamSpace.public_id)
+            .join(TeamMember, TeamMember.team_space_id == TeamSpace.id)
+            .where(TeamMember.user_id == user_id, TeamMember.share_locked.is_(True))
+            .order_by(TeamMember.joined_at)
         )
-    ).first()
+    ).all()
     return {
-        "job_share_locked": bool(row and row[0]),
-        "team_space_name": row[1] if row else None,
-        "team_space_public_id": row[2] if row else None,
+        "job_share_locked": bool(rows),
+        "team_space_name": ", ".join(r[0] for r in rows) if rows else None,
+        "team_space_public_id": rows[0][1] if rows else None,
     }
 
 
@@ -173,15 +178,14 @@ async def _owned_space(session: AsyncSession, lead_id: str, space_id: str) -> Te
     return space
 
 
-async def _membership(session: AsyncSession, user_id: str) -> tuple[TeamMember, TeamSpace] | None:
-    row = (
-        await session.execute(
-            select(TeamMember, TeamSpace)
-            .join(TeamSpace, TeamSpace.id == TeamMember.team_space_id)
-            .where(TeamMember.user_id == user_id)
-        )
-    ).first()
-    return (row[0], row[1]) if row else None
+async def _memberships(session: AsyncSession, user_id: str) -> list[tuple[TeamMember, TeamSpace]]:
+    rows = await session.execute(
+        select(TeamMember, TeamSpace)
+        .join(TeamSpace, TeamSpace.id == TeamMember.team_space_id)
+        .where(TeamMember.user_id == user_id)
+        .order_by(TeamMember.joined_at)
+    )
+    return [(m, s) for m, s in rows.all()]
 
 
 def space_public(space: TeamSpace, *, members: int = 0, pending: int = 0, lead: User | None = None) -> dict[str, Any]:
@@ -237,7 +241,7 @@ async def incoming_invites(session: AsyncSession, user: User) -> list[dict[str, 
 
 
 async def overview(session: AsyncSession, user: User) -> dict[str, Any]:
-    """Spaces I lead, the space I belong to, and invitations waiting for me."""
+    """Spaces I lead, the spaces I belong to, and invitations waiting for me."""
     owned = list(
         (
             await session.execute(
@@ -246,17 +250,18 @@ async def overview(session: AsyncSession, user: User) -> dict[str, Any]:
         ).scalars()
     )
     members, pending = await _counts(session, [s.id for s in owned])
-    membership = await _membership(session, user.id)
-    joined = None
-    if membership:
-        member, space = membership
+    memberships = await _memberships(session, user.id)
+    mcount, _ = await _counts(session, [space.id for _m, space in memberships])
+    joined = []
+    for member, space in memberships:
         lead = await session.get(User, space.owner_user_id)
-        mcount, _ = await _counts(session, [space.id])
-        joined = {
-            **space_public(space, members=mcount.get(space.id, 0), lead=lead),
-            "joined_at": _iso(member.joined_at),
-            "share_locked": bool(member.share_locked),
-        }
+        joined.append(
+            {
+                **space_public(space, members=mcount.get(space.id, 0), lead=lead),
+                "joined_at": _iso(member.joined_at),
+                "share_locked": bool(member.share_locked),
+            }
+        )
     team_packages = await session.execute(
         select(func.count())
         .select_from(UserPackage)
@@ -264,7 +269,7 @@ async def overview(session: AsyncSession, user: User) -> dict[str, Any]:
     )
     return {
         "owned": [space_public(s, members=members.get(s.id, 0), pending=pending.get(s.id, 0), lead=user) for s in owned],
-        "membership": joined,
+        "memberships": joined,
         "invites": await incoming_invites(session, user),
         "team_packages_held": int(team_packages.scalar_one() or 0),
     }
@@ -381,20 +386,9 @@ async def invite(session: AsyncSession, lead: User, space_id: str, emails: Itera
     if len(pending) + len(created) > MAX_PENDING_INVITES:
         raise TeamError(f"A space can have up to {MAX_PENDING_INVITES} open invitations. Revoke some first.")
     await session.flush()
-    in_other_team = set()
-    if created:
-        others = await session.execute(
-            select(User.email)
-            .join(TeamMember, TeamMember.user_id == User.id)
-            .where(func.lower(User.email).in_([i.email for i in created]), TeamMember.team_space_id != space.id)
-        )
-        in_other_team = {row[0].lower() for row in others.all()}
     logger.info("team_invites_sent", user_id=lead.id, space_id=space.id, count=len(created))
     return {
-        "invites": [
-            {**invite_public(i), "has_account": i.email in users, "in_other_team": i.email in in_other_team}
-            for i in created
-        ],
+        "invites": [{**invite_public(i), "has_account": i.email in users} for i in created],
         "skipped": skipped,
     }
 
@@ -469,16 +463,23 @@ async def respond_invite(session: AsyncSession, user: User, invite_id: str, *, a
         return {"status": "declined"}
     if space.owner_user_id == user.id:
         raise TeamError("You lead this space already.")
-    current = await _membership(session, user.id)
-    if current is not None:
-        raise TeamError(f"You are on {current[1].name} ({current[1].public_id}). Leave it first to join another team.")
+    current = await _memberships(session, user.id)
+    if any(s.id == space.id for _m, s in current):
+        row.status = "accepted"
+        row.responded_at = utcnow()
+        await session.flush()
+        lead = await session.get(User, space.owner_user_id)
+        return {"status": "accepted", "space": space_public(space, lead=lead)}
     member = TeamMember(
         id=str(uuid.uuid4()),
         team_space_id=space.id,
         user_id=user.id,
         share_locked=bool(space.default_share_scope and space.default_share_locked),
     )
-    if space.default_share_scope:
+    # A lead on another team who already pinned the setting keeps it; one
+    # person has one sharing setting across all their teams.
+    locked_elsewhere = any(m.share_locked for m, _s in current)
+    if space.default_share_scope and not locked_elsewhere:
         user.job_share_default = space.default_share_scope
     session.add(member)
     row.status = "accepted"
@@ -489,12 +490,14 @@ async def respond_invite(session: AsyncSession, user: User, invite_id: str, *, a
     return {"status": "accepted", "space": space_public(space, lead=lead)}
 
 
-async def leave(session: AsyncSession, user: User) -> None:
-    result = await session.execute(delete(TeamMember).where(TeamMember.user_id == user.id))
+async def leave(session: AsyncSession, user: User, space_id: str) -> None:
+    result = await session.execute(
+        delete(TeamMember).where(TeamMember.user_id == user.id, TeamMember.team_space_id == space_id)
+    )
     if not result.rowcount:
         raise TeamNotFound()
     await session.flush()
-    logger.info("team_member_left", user_id=user.id)
+    logger.info("team_member_left", user_id=user.id, space_id=space_id)
 
 
 # ── Monitoring ─────────────────────────────────────────────────────────────

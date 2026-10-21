@@ -15,7 +15,7 @@ const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 export async function fetchTeamOverview(): Promise<TeamOverview> {
   const { data } = await apiClient.get<TeamOverview>('/teams');
-  return data;
+  return { ...data, memberships: data.memberships ?? [] };
 }
 
 export async function createTeamSpace(packageId: string, name: string): Promise<TeamSpaceSummary> {
@@ -91,6 +91,6 @@ export async function respondToTeamInvite(inviteId: string, accept: boolean): Pr
   return data;
 }
 
-export async function leaveTeam(): Promise<void> {
-  await apiClient.post('/teams/leave');
+export async function leaveTeam(spaceId: string): Promise<void> {
+  await apiClient.post(`/teams/${encodeURIComponent(spaceId)}/leave`);
 }

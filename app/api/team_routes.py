@@ -71,13 +71,13 @@ async def create_space(body: CreateSpaceRequest, current_user: dict = Depends(ge
     return space
 
 
-@router.post("/leave")
-async def leave_team(current_user: dict = Depends(get_current_user)):
+@router.post("/{space_id}/leave")
+async def leave_team(space_id: str, current_user: dict = Depends(get_current_user)):
     async with get_session() as session:
         try:
-            await team_service.leave(session, await _me(session, current_user))
+            await team_service.leave(session, await _me(session, current_user), space_id)
         except team_service.TeamNotFound as e:
-            raise _not_found("You are not on a team") from e
+            raise _not_found("You are not on this team") from e
         await session.commit()
     return {"success": True}
 

@@ -557,8 +557,6 @@ function InviteCard({ space, invites }: { space: TeamSpaceSummary; invites: Team
         toast.success(`Invited ${res.invites.length} ${res.invites.length === 1 ? 'person' : 'people'}`);
       }
       for (const s of res.skipped) toast.message(`${s.email}: ${s.reason}`);
-      const elsewhere = res.invites.filter((i) => i.in_other_team).map((i) => i.email);
-      if (elsewhere.length) toast.message(`On another team right now: ${elsewhere.join(', ')}. They must leave it to join.`);
       setRaw('');
       refresh();
     },

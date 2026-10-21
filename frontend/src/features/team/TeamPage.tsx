@@ -57,7 +57,8 @@ export function TeamPage() {
   const multi = owned.length > 1;
   const selectedId =
     owned.find((s) => s.id === requested)?.id ?? (multi ? ALL_SPACES : (owned[0]?.id ?? null));
-  const nothing = !owned.length && !data.membership && !data.invites.length;
+  const memberships = data.memberships;
+  const nothing = !owned.length && !memberships.length && !data.invites.length;
   const openSpace = (id: string) =>
     setParams(id === ALL_SPACES ? {} : { space: id }, { replace: true });
 
@@ -69,7 +70,7 @@ export function TeamPage() {
       icon={UsersRound}
     >
       <div className="space-y-6">
-        {data.invites.length ? <Invitations invites={data.invites} onTeam={!!data.membership} /> : null}
+        {data.invites.length ? <Invitations invites={data.invites} /> : null}
 
         {data.team_packages_held ? <UnusedTeamPackages count={data.team_packages_held} /> : null}
 
@@ -89,7 +90,19 @@ export function TeamPage() {
           </section>
         ) : null}
 
-        {data.membership ? <MembershipCard membership={data.membership} /> : null}
+        {memberships.length ? (
+          <section aria-label="Teams you are on" className="space-y-4">
+            {memberships.length > 1 ? (
+              <p className="text-sm text-muted-foreground">
+                You are on {memberships.length} teams. Jobs shared with any of them show up on your Jobs page, filtered by
+                your own preferences like everything else.
+              </p>
+            ) : null}
+            {memberships.map((m) => (
+              <MembershipCard key={m.id} membership={m} />
+            ))}
+          </section>
+        ) : null}
 
         {nothing && !data.team_packages_held ? <EmptyTeam /> : null}
       </div>
@@ -105,7 +118,7 @@ function useRefreshTeam() {
   };
 }
 
-function Invitations({ invites, onTeam }: { invites: TeamInvite[]; onTeam: boolean }) {
+function Invitations({ invites }: { invites: TeamInvite[] }) {
   const refresh = useRefreshTeam();
   const respond = useMutation({
     mutationFn: ({ id, accept }: { id: string; accept: boolean }) => respondToTeamInvite(id, accept),
@@ -119,11 +132,7 @@ function Invitations({ invites, onTeam }: { invites: TeamInvite[]; onTeam: boole
     <SectionCard
       title="Invitations"
       icon={Mail}
-      description={
-        onTeam
-          ? 'You can be on one team at a time. Leave your current team to accept another.'
-          : 'Accept to join. Your lead sees your job adds, applications, and interviews.'
-      }
+      description="Accept to join. You can be on several teams; each lead sees your job adds, applications, and interviews."
     >
       <ul className="divide-y">
         {invites.map((invite) => (
@@ -145,7 +154,7 @@ function Invitations({ invites, onTeam }: { invites: TeamInvite[]; onTeam: boole
               >
                 <X /> Decline
               </Button>
-              <Button size="sm" disabled={respond.isPending || onTeam} onClick={() => respond.mutate({ id: invite.id, accept: true })}>
+              <Button size="sm" disabled={respond.isPending} onClick={() => respond.mutate({ id: invite.id, accept: true })}>
                 <Check /> Accept
               </Button>
             </div>
@@ -181,7 +190,7 @@ function MembershipCard({ membership }: { membership: TeamMembership }) {
   const refresh = useRefreshTeam();
   const [confirm, setConfirm] = useState(false);
   const leave = useMutation({
-    mutationFn: leaveTeam,
+    mutationFn: () => leaveTeam(membership.id),
     onSuccess: () => {
       toast.success(`You left ${membership.name}`);
       setConfirm(false);
@@ -191,10 +200,16 @@ function MembershipCard({ membership }: { membership: TeamMembership }) {
   });
   return (
     <SectionCard
-      title="Your team"
+      title="Member of"
       icon={UsersRound}
       actions={
-        <Button variant="outline" size="sm" onClick={() => setConfirm(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          aria-label={`Leave ${membership.name}`}
+          onClick={() => setConfirm(true)}
+        >
           <LogOut /> Leave team
         </Button>
       }
@@ -224,7 +239,7 @@ function MembershipCard({ membership }: { membership: TeamMembership }) {
         <li>
           {membership.share_locked
             ? 'Your lead set how the jobs you add are shared. You can see it under Preferences.'
-            : 'You choose how the jobs you add are shared, under Preferences. "Team space" shares them with this team.'}
+            : 'You choose how the jobs you add are shared, under Preferences. "Team space" shares them with everyone on your teams.'}
         </li>
       </ul>
 
@@ -233,8 +248,8 @@ function MembershipCard({ membership }: { membership: TeamMembership }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Leave {membership.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Your lead stops seeing your activity, and jobs you shared with the team are no longer visible to them. You need a new
-              invitation to come back.
+              This lead stops seeing your activity, and jobs you shared with the team are no longer visible to its members.
+              Your other teams are not affected. You need a new invitation to come back.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

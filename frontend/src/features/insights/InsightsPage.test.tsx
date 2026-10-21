@@ -102,7 +102,7 @@ const MEMBERS: TeamMemberRow[] = [
 ];
 
 function leadOf(members: TeamMemberRow[] = MEMBERS) {
-  fetchOverview.mockResolvedValue({ owned: [SPACE], membership: null, invites: [], team_packages_held: 0 });
+  fetchOverview.mockResolvedValue({ owned: [SPACE], memberships: [], invites: [], team_packages_held: 0 });
   fetchSpace.mockResolvedValue({ space: SPACE, members, invites: [], stats_days: 30 });
 }
 
@@ -207,7 +207,7 @@ describe('InsightsPage', () => {
     fetchInbox.mockResolvedValue(inbox({ connected: false, connection: null }));
     startSync.mockClear();
     fetchOverview.mockReset();
-    fetchOverview.mockResolvedValue({ owned: [], membership: null, invites: [], team_packages_held: 0 });
+    fetchOverview.mockResolvedValue({ owned: [], memberships: [], invites: [], team_packages_held: 0 });
     fetchSpace.mockReset();
     fetchInsights.mockReset();
     fetchInsights.mockResolvedValue(teamInsights());

@@ -1253,15 +1253,17 @@ class TeamSpace(Base):
 
 
 class TeamMember(Base):
-    """A member of a team space. A person belongs to at most one space; the lead is not a member row."""
+    """A member of a team space. A person can be on several spaces; the lead is not a member row."""
     __tablename__ = "team_members"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     team_space_id = Column(String(36), ForeignKey("team_spaces.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     # When locked, the member's job_share_default is pinned to this value.
     share_locked = Column(Boolean, nullable=False, server_default="false")
     joined_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("team_space_id", "user_id", name="uq_team_members_space_user"),)
 
 
 class TeamInvite(Base):
