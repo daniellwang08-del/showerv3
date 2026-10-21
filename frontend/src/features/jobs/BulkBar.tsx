@@ -45,7 +45,12 @@ export function BulkBar({ selected, pageCount, onSelectAll, onClear, onAction, m
         >
           <ClipboardCheck /> <span className={label}>Mark applied</span>
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => onAction('prepare', selected)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={() => onAction('prepare', selected)}
+        >
           <RefreshCw /> <span className={label}>Prepare</span>
         </Button>
         <Button variant="ghost" size="sm" className="max-sm:hidden" onClick={() => onAction('open-url', selected)}>

@@ -170,7 +170,12 @@ function SpaceHeader({ space }: { space: TeamSpaceSummary }) {
         <Button variant="outline" size="sm" onClick={() => setRenaming(true)}>
           <Pencil /> Rename
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setConfirmDelete(true)}>
+        <Button
+          variant="outline"
+          size="sm"
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={() => setConfirmDelete(true)}
+        >
           <Trash2 /> Close space
         </Button>
       </div>
@@ -399,7 +404,13 @@ function MemberRow({ spaceId, member, onRemove }: { spaceId: string; member: Tea
         >
           <BarChart3 /> Report
         </Link>
-        <Button variant="ghost" size="icon-xs" aria-label={`Remove ${member.name}`} onClick={onRemove}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`Remove ${member.name}`}
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={onRemove}
+        >
           <UserMinus />
         </Button>
       </div>
