@@ -564,18 +564,19 @@ async def _member_stats(
         stats[uid]["active_interviews"] = int(n or 0)
         bump(uid, when)
 
+    # One booking can arrive in several emails; count each time once.
     upcoming = await session.execute(
-        select(InterviewEvent.user_id, func.count())
+        select(InterviewEvent.user_id, InterviewEvent.process_id, InterviewEvent.scheduled_at)
         .where(
             InterviewEvent.user_id.in_(user_ids),
             InterviewEvent.status == "scheduled",
             InterviewEvent.scheduled_at >= now,
             InterviewEvent.ignored_at.is_(None),
         )
-        .group_by(InterviewEvent.user_id)
+        .distinct()
     )
-    for uid, n in upcoming.all():
-        stats[uid]["upcoming_interviews"] = int(n or 0)
+    for uid, _process_id, _at in upcoming.all():
+        stats[uid]["upcoming_interviews"] += 1
 
     for uid, when in last.items():
         stats[uid]["last_active_at"] = _iso(when)

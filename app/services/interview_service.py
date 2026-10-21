@@ -195,6 +195,12 @@ async def apply_extraction(
 
     if event.status == "scheduled":
         await _close_open_requests(session, process.id, exclude=event.id, before=email_date)
+        # Invites, confirmations and "see you then" replies all name the same
+        # time; only the first one is a booking, the rest stay in the timeline.
+        booked = await _booked_twin(session, process.id, event)
+        if booked is not None:
+            fill_missing_booking(booked, event)
+            event.status = "info"
 
     if result.get("role") and not process.role_title:
         process.role_title = result["role"]
@@ -212,6 +218,38 @@ async def apply_extraction(
         process.stage, process.status = stage_after_event(process.stage, process.status, kind)
     await session.flush()
     return outcome
+
+
+SAME_BOOKING = timedelta(minutes=5)
+BOOKING_DETAILS = ("meeting_url", "location", "interviewers", "duration_minutes")
+
+
+def fill_missing_booking(booked: InterviewEvent, other: InterviewEvent) -> None:
+    """Copy details the booking lacks (a later email may carry the meeting link)."""
+    for field in BOOKING_DETAILS:
+        if getattr(booked, field) is None and getattr(other, field) is not None:
+            setattr(booked, field, getattr(other, field))
+
+
+async def _booked_twin(session: AsyncSession, process_id: str, event: InterviewEvent) -> InterviewEvent | None:
+    """Another scheduled event in this process at the same time, if any."""
+    at = event.scheduled_at
+    if at is None:
+        return None
+    rows = (
+        await session.execute(
+            select(InterviewEvent)
+            .where(
+                InterviewEvent.process_id == process_id,
+                InterviewEvent.id != event.id,
+                InterviewEvent.status == "scheduled",
+                InterviewEvent.scheduled_at.between(at - SAME_BOOKING, at + SAME_BOOKING),
+            )
+            .order_by(InterviewEvent.email_date.asc().nullsfirst())
+            .limit(1)
+        )
+    ).scalars()
+    return next(iter(rows), None)
 
 
 async def _close_open_requests(
@@ -525,17 +563,17 @@ def process_public(
 def summarize(processes: list[dict[str, Any]]) -> dict[str, int]:
     now = datetime.now(timezone.utc)
     week = now + timedelta(days=7)
-    upcoming = 0
-    for p in processes:
+    upcoming: set[tuple[int, str]] = set()
+    for i, p in enumerate(processes):
         for e in p["events"]:
             if e["status"] == "scheduled" and e["scheduled_at"]:
                 at = datetime.fromisoformat(e["scheduled_at"])
                 if now <= at <= week:
-                    upcoming += 1
+                    upcoming.add((i, e["scheduled_at"]))
     active = [p for p in processes if p["status"] == "active"]
     return {
         "active": len(active),
-        "upcoming_week": upcoming,
+        "upcoming_week": len(upcoming),
         "needs_action": sum(1 for p in active if p["needs_action"]),
         "offers": sum(1 for p in active if p["stage"] == "offer"),
         "closed": len(processes) - len(active),

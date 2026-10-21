@@ -210,6 +210,82 @@ def test_new_process_is_flushed_before_its_event():
     )
 
 
+class _Rows:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def scalars(self):
+        return iter(self.rows)
+
+    def scalar_one_or_none(self):
+        return self.rows[0] if self.rows else None
+
+
+class _ScriptedSession:
+    """Answers queries in order: process candidates, same message, open requests, same-time booking."""
+
+    def __init__(self, *answers):
+        self.answers = list(answers)
+        self.added = []
+
+    async def execute(self, _stmt):
+        return _Rows(self.answers.pop(0) if self.answers else [])
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        pass
+
+
+def _booking_result(**kw):
+    return ex.normalize_result(
+        {
+            "relevant": True,
+            "company": "Archive",
+            "kind": "recruiter_screen",
+            "status": "scheduled",
+            "scheduled_at": "2026-11-06T23:00:00Z",
+            "interviewers": "Kathleen",
+            **kw,
+        },
+        "UTC",
+    )
+
+
+def test_reply_confirming_a_booked_time_is_not_a_second_booking():
+    booked = _event(id="invite", kind="recruiter_screen", status="scheduled",
+                    scheduled_at=datetime(2026, 11, 6, 23, 0), meeting_url=None, location=None)
+    process = _process()
+    session = _ScriptedSession([process], [], [], [booked])
+    message = {"id": "reply-1", "subject": "Re: Next Steps", "from": "kathleen@archive.co",
+               "date": datetime(2026, 10, 21, 17, 13)}
+    result = _booking_result(meeting_url="https://meet.google.com/abc-defg-hij")
+    asyncio.run(svc.apply_extraction(session, "u1", message, result))
+    [reply] = [o for o in session.added if getattr(o, "message_id", None) == "reply-1"]
+    assert reply.status == "info"
+    assert booked.status == "scheduled"
+    assert booked.meeting_url == "https://meet.google.com/abc-defg-hij"
+
+
+def test_first_email_for_a_time_stays_a_booking():
+    session = _ScriptedSession([_process()], [], [], [])
+    message = {"id": "invite", "subject": "Invitation", "from": "kathleen@archive.co",
+               "date": datetime(2026, 10, 21, 17, 13)}
+    asyncio.run(svc.apply_extraction(session, "u1", message, _booking_result()))
+    [event] = [o for o in session.added if getattr(o, "message_id", None) == "invite"]
+    assert event.status == "scheduled"
+
+
+def test_summarize_counts_one_booking_once():
+    soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+    processes = [
+        {"status": "active", "stage": "screening", "needs_action": False,
+         "events": [{"status": "scheduled", "scheduled_at": soon}] * 4},
+    ]
+    assert svc.summarize(processes)["upcoming_week"] == 1
+
+
 def test_summarize_counts():
     soon = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
     later = (datetime.now(timezone.utc) + timedelta(days=20)).isoformat()

@@ -280,31 +280,32 @@ export function interviewLanes(processes: InterviewProcess[], now = Date.now()):
 
 export type UpcomingItem = { event: InterviewEvent; process: InterviewProcess };
 
-export function upcomingInterviews(processes: InterviewProcess[], now = new Date()): UpcomingItem[] {
-  const items: UpcomingItem[] = [];
+/** One item per process and time: an invite and its confirmations are one booking. */
+function bookings(processes: InterviewProcess[], keep: (event: InterviewEvent) => boolean): UpcomingItem[] {
+  const items = new Map<string, UpcomingItem>();
   for (const process of processes) {
     if (process.status !== 'active') continue;
     for (const event of process.events) {
-      if (event.status === 'scheduled' && event.scheduled_at && new Date(event.scheduled_at) >= now) {
-        items.push({ event, process });
-      }
+      if (event.status !== 'scheduled' || !event.scheduled_at || !keep(event)) continue;
+      const key = `${process.id}@${Date.parse(event.scheduled_at)}`;
+      const seen = items.get(key);
+      if (!seen || (!seen.event.meeting_url && event.meeting_url)) items.set(key, { event, process });
     }
   }
-  return items.sort((a, b) => Date.parse(a.event.scheduled_at!) - Date.parse(b.event.scheduled_at!));
+  return [...items.values()];
+}
+
+export function upcomingInterviews(processes: InterviewProcess[], now = new Date()): UpcomingItem[] {
+  return bookings(processes, (e) => new Date(e.scheduled_at!) >= now).sort(
+    (a, b) => Date.parse(a.event.scheduled_at!) - Date.parse(b.event.scheduled_at!),
+  );
 }
 
 /** Rounds that already happened but are still marked scheduled: the user should log the outcome. */
 export function awaitingOutcome(processes: InterviewProcess[], now = new Date()): UpcomingItem[] {
-  const items: UpcomingItem[] = [];
-  for (const process of processes) {
-    if (process.status !== 'active') continue;
-    for (const event of process.events) {
-      if (event.status === 'scheduled' && !event.ignored && event.scheduled_at && new Date(event.scheduled_at) < now) {
-        items.push({ event, process });
-      }
-    }
-  }
-  return items.sort((a, b) => Date.parse(b.event.scheduled_at!) - Date.parse(a.event.scheduled_at!));
+  return bookings(processes, (e) => !e.ignored && new Date(e.scheduled_at!) < now).sort(
+    (a, b) => Date.parse(b.event.scheduled_at!) - Date.parse(a.event.scheduled_at!),
+  );
 }
 
 export function actionItems(processes: InterviewProcess[]): UpcomingItem[] {

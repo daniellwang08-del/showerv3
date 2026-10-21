@@ -140,6 +140,21 @@ describe('interviewsModel', () => {
     expect(awaitingOutcome(processes, NOW).map((i) => i.event.id)).toEqual(['past']);
   });
 
+  it('lists a booking once when several emails confirm the same time', () => {
+    const at = '2026-11-06T23:00:00Z';
+    const processes = [
+      makeProcess({
+        events: [
+          makeEvent({ id: 'reply', scheduled_at: at, meeting_url: null }),
+          makeEvent({ id: 'invite', scheduled_at: at, meeting_url: 'https://meet.example/abc' }),
+          makeEvent({ id: 'thanks', scheduled_at: '2026-11-06T23:00:00.000Z', meeting_url: null }),
+        ],
+      }),
+      makeProcess({ id: 'p2', events: [makeEvent({ id: 'other', scheduled_at: at })] }),
+    ];
+    expect(upcomingInterviews(processes, NOW).map((i) => i.event.id)).toEqual(['invite', 'other']);
+  });
+
   it('lists scheduling requests and required actions', () => {
     const processes = [
       makeProcess({

@@ -493,7 +493,7 @@ def test_team_insights_bucket_member_activity_by_local_day(monkeypatch):
         _Result(rows=[]),
         _Result(rows=[]),
         _Result(rows=[("u2", 1, datetime(2026, 10, 20, 12, 0))]),
-        _Result(rows=[("u2", 2)]),
+        _Result(rows=[("u2", "p1", datetime(2026, 10, 22, 15, 0)), ("u2", "p2", datetime(2026, 10, 23, 15, 0))]),
         objects={"s1": space},
     )
     data = run(team_service.team_insights(session, _user("lead"), "s1", 7, "America/New_York"))
