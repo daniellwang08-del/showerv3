@@ -11,6 +11,7 @@ import {
   leaveTeam,
   respondToTeamInvite,
   updateTeamMember,
+  updateTeamSpace,
 } from '@/api/teamApi';
 import type { TeamOverview, TeamSpaceDetail, TeamSpaceSummary } from '@/types/team';
 import { TeamPage } from './TeamPage';
@@ -169,6 +170,30 @@ describe('TeamPage', () => {
     await user.type(await screen.findByLabelText('Emails to invite'), 'a@x.io, B@x.io a@x.io');
     await user.click(screen.getByRole('button', { name: 'Invite 2' }));
     await waitFor(() => expect(inviteToTeam).toHaveBeenCalledWith('s1', ['a@x.io', 'b@x.io']));
+  });
+
+  it('blocks sending while an address is malformed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchTeamOverview).mockResolvedValue(overview({ owned: [space] }));
+    renderPage();
+    await user.type(await screen.findByLabelText('Emails to invite'), 'a@x.io nope');
+    expect(screen.getByRole('button', { name: 'Invite 2' })).toBeDisabled();
+    expect(screen.getByText(/Check this address: nope/)).toBeInTheDocument();
+  });
+
+  it('sets the job sharing new members start with', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchTeamOverview).mockResolvedValue(overview({ owned: [space] }));
+    vi.mocked(updateTeamSpace).mockResolvedValue(space);
+    renderPage();
+    const group = await screen.findByRole('radiogroup', { name: 'Job sharing for new members' });
+    expect(within(group).getByRole('radio', { name: /Member's choice/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: /Lock it so members cannot change it/ })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    await user.click(within(group).getByRole('radio', { name: /Team space/ }));
+    await waitFor(() => expect(updateTeamSpace).toHaveBeenCalledWith('s1', { default_share_scope: 'team' }));
   });
 
   it('lets an invitee accept', async () => {

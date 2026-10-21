@@ -127,13 +127,11 @@ function SpaceView({ detail }: { detail: TeamSpaceDetail }) {
           tone="bg-chart-2/10 text-chart-2"
         />
       </div>
+      <InviteCard space={space} invites={invites} />
       <MembersCard groups={[{ space, members }]} days={days} />
       <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <TeamActivityCard spaceId={space.id} hasMembers={members.length > 0} />
-        <div className="space-y-4">
-          <InviteCard spaceId={space.id} invites={invites} />
-          <PolicyCard space={space} />
-        </div>
+        <PolicyCard space={space} />
       </div>
     </div>
   );
@@ -546,12 +544,14 @@ function Stat({ label, value, hint }: { label: string; value: number; hint?: str
   );
 }
 
-function InviteCard({ spaceId, invites }: { spaceId: string; invites: TeamSpaceDetail['invites'] }) {
-  const refresh = useRefresh(spaceId);
+function InviteCard({ space, invites }: { space: TeamSpaceSummary; invites: TeamSpaceDetail['invites'] }) {
+  const refresh = useRefresh(space.id);
   const [raw, setRaw] = useState('');
   const emails = parseEmails(raw);
+  const invalid = emails.filter((e) => !EMAIL_RE.test(e));
+  const tooMany = emails.length > 10;
   const send = useMutation({
-    mutationFn: () => inviteToTeam(spaceId, emails),
+    mutationFn: () => inviteToTeam(space.id, emails),
     onSuccess: (res) => {
       if (res.invites.length) {
         toast.success(`Invited ${res.invites.length} ${res.invites.length === 1 ? 'person' : 'people'}`);
@@ -565,43 +565,94 @@ function InviteCard({ spaceId, invites }: { spaceId: string; invites: TeamSpaceD
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not send the invitations.')),
   });
   const revoke = useMutation({
-    mutationFn: (inviteId: string) => revokeTeamInvite(spaceId, inviteId),
+    mutationFn: (inviteId: string) => revokeTeamInvite(space.id, inviteId),
     onSuccess: () => refresh(),
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not cancel the invitation.')),
   });
+  const canSend = emails.length > 0 && !tooMany && !invalid.length && !send.isPending;
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (emails.length) send.mutate();
+    if (canSend) send.mutate();
   };
   return (
-    <SectionCard title="Invite members" icon={MailPlus} description="They accept from their Team page. Emails without an account can sign up first.">
-      <form onSubmit={submit} className="space-y-2">
-        <Label htmlFor="invite-emails" className="sr-only">
-          Emails to invite
-        </Label>
-        <Textarea
-          id="invite-emails"
-          rows={2}
-          placeholder="name@company.com, another@company.com"
-          value={raw}
-          onChange={(e) => setRaw(e.target.value)}
-        />
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">Up to 10 at a time.</span>
-          <Button type="submit" size="sm" disabled={!emails.length || emails.length > 10 || send.isPending}>
-            {send.isPending ? 'Inviting…' : emails.length > 1 ? `Invite ${emails.length}` : 'Invite'}
-          </Button>
+    <section
+      aria-labelledby={`invite-title-${space.id}`}
+      className="relative overflow-hidden rounded-2xl border border-brand/30 bg-gradient-to-br from-brand/10 via-card to-chart-2/10 p-5 shadow-sm"
+    >
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+        <div className="flex min-w-0 items-start gap-3 lg:w-72 lg:shrink-0">
+          <span
+            aria-hidden
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand text-brand-foreground shadow-sm"
+          >
+            <MailPlus className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <h3 id={`invite-title-${space.id}`} className="text-base font-semibold">
+              Invite members to {space.name}
+            </h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              They accept from their Team page. People without an account can sign up with the same email first.
+            </p>
+          </div>
         </div>
-      </form>
+
+        <form onSubmit={submit} className="min-w-0 flex-1 space-y-2">
+          <Label htmlFor={`invite-emails-${space.id}`} className="sr-only">
+            Emails to invite
+          </Label>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <Textarea
+              id={`invite-emails-${space.id}`}
+              rows={2}
+              placeholder="name@company.com, another@company.com"
+              value={raw}
+              onChange={(e) => setRaw(e.target.value)}
+              aria-invalid={invalid.length > 0 || tooMany}
+              className="min-h-11 flex-1 resize-y bg-background"
+            />
+            <Button type="submit" className="sm:h-auto sm:min-w-32" disabled={!canSend}>
+              <MailPlus />
+              {send.isPending ? 'Inviting…' : emails.length > 1 ? `Invite ${emails.length}` : 'Send invite'}
+            </Button>
+          </div>
+          {emails.length ? (
+            <ul aria-label="Emails to invite" className="flex flex-wrap gap-1.5">
+              {emails.map((e) => (
+                <li
+                  key={e}
+                  className={cn(
+                    'rounded-full border px-2 py-0.5 text-xs',
+                    EMAIL_RE.test(e) ? 'bg-background' : 'border-destructive/40 bg-destructive/10 text-destructive',
+                  )}
+                >
+                  {e}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p className={cn('text-xs', invalid.length || tooMany ? 'text-destructive' : 'text-muted-foreground')}>
+            {tooMany
+              ? 'Up to 10 at a time.'
+              : invalid.length
+                ? `Check ${invalid.length === 1 ? 'this address' : 'these addresses'}: ${invalid.join(', ')}`
+                : 'Paste one or more emails, separated by commas, spaces, or new lines. Up to 10 at a time.'}
+          </p>
+        </form>
+      </div>
+
       {invites.length ? (
-        <div className="mt-4">
+        <div className="mt-4 border-t border-brand/15 pt-3">
           <p className="text-xs font-medium text-muted-foreground">Waiting for an answer ({invites.length})</p>
-          <ul className="mt-1 divide-y">
+          <ul aria-label="Pending invitations" className="mt-2 flex flex-wrap gap-2">
             {invites.map((i) => (
-              <li key={i.id} className="flex items-center justify-between gap-2 py-2 text-sm">
+              <li
+                key={i.id}
+                className="flex items-center gap-2 rounded-full border bg-background/80 py-1 pr-1 pl-3 text-sm shadow-xs"
+              >
                 <span className="min-w-0">
-                  <span className="block truncate">{i.email}</span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="truncate">{i.email}</span>
+                  <span className="ml-2 text-[11px] text-muted-foreground">
                     {i.has_account ? 'Has an account' : 'No account yet'}
                     {i.created_at ? ` · sent ${relativeAgo(i.created_at) ?? ''}` : ''}
                   </span>
@@ -609,6 +660,7 @@ function InviteCard({ spaceId, invites }: { spaceId: string; invites: TeamSpaceD
                 <Button
                   variant="ghost"
                   size="icon-xs"
+                  className="rounded-full"
                   aria-label={`Cancel the invitation to ${i.email}`}
                   disabled={revoke.isPending}
                   onClick={() => revoke.mutate(i.id)}
@@ -620,59 +672,82 @@ function InviteCard({ spaceId, invites }: { spaceId: string; invites: TeamSpaceD
           </ul>
         </div>
       ) : null}
-    </SectionCard>
+    </section>
   );
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const POLICY_CHOICES: { value: string; label: string; description: string }[] = [
+  { value: POLICY_NONE, label: "Member's choice", description: 'Each member picks in their own Preferences' },
+  ...SHARE_OPTIONS,
+];
+
+/** The job sharing a member starts with when they join, and whether they may change it. */
 function PolicyCard({ space }: { space: TeamSpaceSummary }) {
   const refresh = useRefresh(space.id);
   const save = useMutation({
     mutationFn: (changes: { default_share_scope?: JobShareDefault | ''; default_share_locked?: boolean }) =>
       updateTeamSpace(space.id, changes),
     onSuccess: () => {
-      toast.success('New member sharing saved');
+      toast.success('Sharing for new members saved');
       refresh();
     },
     onError: (err) => toast.error(extractApiErrorMessage(err, 'Could not save.')),
   });
-  const items = [
-    { value: POLICY_NONE, label: "Keep the member's choice" },
-    ...SHARE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-  ];
   const current = space.default_share_scope ?? POLICY_NONE;
+  const lockId = `policy-lock-${space.id}`;
   return (
     <SectionCard
       title="Sharing for new members"
       icon={Settings2}
-      description="Applied when someone joins. Change any member later from the members list."
+      description="Controls who sees the job posts your members add. New members start with this setting when they join. Change anyone later from the Members table."
     >
-      <div className="space-y-3">
-        <Select
-          items={items}
-          value={current}
-          disabled={save.isPending}
-          onValueChange={(v) => {
-            if (v == null || v === current) return;
-            save.mutate({ default_share_scope: v === POLICY_NONE ? '' : (v as JobShareDefault) });
-          }}
+      <div className="space-y-4">
+        <div role="radiogroup" aria-label="Job sharing for new members" className="grid gap-2 sm:grid-cols-2">
+          {POLICY_CHOICES.map((o) => {
+            const active = o.value === current;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={save.isPending}
+                onClick={() => {
+                  if (active) return;
+                  save.mutate({ default_share_scope: o.value === POLICY_NONE ? '' : (o.value as JobShareDefault) });
+                }}
+                className={cn(
+                  'rounded-xl border px-3 py-2.5 text-left transition-colors disabled:opacity-60',
+                  active ? 'border-brand bg-brand/10 ring-1 ring-brand/30' : 'hover:bg-muted/50',
+                )}
+              >
+                <span className="block text-sm font-medium">{o.label}</span>
+                <span className="block text-xs text-muted-foreground">{o.description}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div
+          className={cn(
+            'flex items-start justify-between gap-3 rounded-xl border px-3 py-2.5',
+            !space.default_share_scope && 'opacity-60',
+          )}
         >
-          <SelectTrigger aria-label="Sharing for new members" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            {items.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="flex items-center justify-between gap-3">
-          <label htmlFor={`policy-lock-${space.id}`} className={cn('text-sm', !space.default_share_scope && 'text-muted-foreground')}>
-            Lock it so members cannot change it
+          <label htmlFor={lockId} className="min-w-0 cursor-pointer">
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              {space.default_share_locked ? <Lock className="size-3.5" aria-hidden /> : <LockOpen className="size-3.5" aria-hidden />}
+              Lock it so members cannot change it
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {space.default_share_scope
+                ? 'Locked members see the setting in Preferences but cannot change it.'
+                : "Pick a sharing option first. With Member's choice there is nothing to lock."}
+            </span>
           </label>
           <Switch
-            id={`policy-lock-${space.id}`}
+            id={lockId}
             checked={space.default_share_locked}
             disabled={save.isPending || !space.default_share_scope}
             onCheckedChange={(next) => save.mutate({ default_share_locked: next })}
