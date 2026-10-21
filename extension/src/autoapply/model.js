@@ -39,8 +39,11 @@ export function startOfDay(now = Date.now()) {
   return d.getTime();
 }
 
-/** Ranked queue -> the order and filter the user picked. Never mutates. */
-export function arrangeQueue(queue, { order = "ease", minScore = 0, pinned = [] } = {}) {
+/**
+ * Ranked queue -> the order and filter the user picked. Never mutates.
+ * Pinned jobs come first; jobs set aside for later come after all others.
+ */
+export function arrangeQueue(queue, { order = "ease", minScore = 0, pinned = [], later = new Set() } = {}) {
   const pins = new Map(pinned.map((id, i) => [id, i]));
   const kept = queue.filter((q) => pins.has(q.id) || !minScore || (q.score != null && q.score >= minScore));
   const by = {
@@ -51,9 +54,12 @@ export function arrangeQueue(queue, { order = "ease", minScore = 0, pinned = [] 
   return kept.sort((a, b) => {
     const pa = pins.has(a.id) ? pins.get(a.id) : Infinity;
     const pb = pins.has(b.id) ? pins.get(b.id) : Infinity;
-    return pa - pb || by(a, b);
+    return pa - pb || Number(later.has(a.id)) - Number(later.has(b.id)) || by(a, b);
   });
 }
+
+/** History statuses whose job may be picked up again by the queue. */
+export const RETRYABLE = new Set(["failed", "later"]);
 
 const companyKey = (name) => String(name || "").trim().toLowerCase();
 
@@ -105,7 +111,7 @@ export function isWaiting(h) {
 /** Finished attempts in the last `days`: how many and how many were submitted. */
 export function successStats(history, { days = 7, now = Date.now() } = {}) {
   const since = now - days * 24 * 60 * 60 * 1000;
-  const recent = Object.values(history || {}).filter((h) => h.at >= since && h.status !== "skipped");
+  const recent = Object.values(history || {}).filter((h) => h.at >= since && h.status !== "skipped" && h.status !== "later");
   const applied = recent.filter((h) => h.status === "applied").length;
   return { attempts: recent.length, applied, rate: recent.length ? Math.round((applied / recent.length) * 100) : null };
 }

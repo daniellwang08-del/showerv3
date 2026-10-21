@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  RETRYABLE,
   appliedToday,
   arrangeQueue,
   easeLabel,
@@ -28,6 +29,25 @@ test("arrangeQueue puts pinned jobs first and keeps them past the score filter",
   const queue = [q("a", 1, 90), q("b", 1, 40), q("c", 1, -1), q("d", 3, 75)];
   const out = arrangeQueue(queue, { order: "ease", minScore: 70, pinned: ["c"] });
   assert.deepEqual(out.map((j) => j.id), ["c", "a", "d"]);
+});
+
+test("arrangeQueue runs apply-later jobs after every other job, pins still first", () => {
+  const queue = [q("a", 1, 90), q("b", 1, 80), q("c", 3, 50), q("d", 2, 70)];
+  const later = new Set(["a", "d"]);
+  assert.deepEqual(arrangeQueue(queue, { order: "ease", later }).map((j) => j.id), ["b", "c", "a", "d"]);
+  assert.deepEqual(arrangeQueue(queue, { order: "match", later }).map((j) => j.id), ["b", "c", "a", "d"]);
+  assert.deepEqual(arrangeQueue(queue, { order: "ease", later, pinned: ["d"] }).map((j) => j.id), ["d", "b", "c", "a"]);
+});
+
+test("apply-later and failed jobs are retryable, later does not count as an attempt", () => {
+  assert.ok(RETRYABLE.has("later") && RETRYABLE.has("failed"));
+  assert.ok(!RETRYABLE.has("invalid") && !RETRYABLE.has("needs_you"));
+  const history = {
+    a: { status: "later", at: NOW - 1000 },
+    b: { status: "applied", at: NOW - 1000 },
+    c: { status: "invalid", at: NOW - 1000 },
+  };
+  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 2, applied: 1, rate: 50 });
 });
 
 test("nextRunnable respects the per-company daily cap", () => {

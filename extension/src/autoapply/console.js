@@ -12,6 +12,7 @@ import {
   ORDERS,
   STAGES,
   appliedToday,
+  RETRYABLE,
   arrangeQueue,
   easeLabel,
   easeTier,
@@ -68,6 +69,7 @@ let store = {
   skipped: [],
   runs: {},
   phase: "idle", // idle | running | paused
+  pauseReason: null, // "waiting" when paused by the waiting-on-you limit
   loading: false,
   loadedAt: 0,
   notice: null,
@@ -118,8 +120,12 @@ function queueOf(s) {
   const skipped = new Set(s.skipped);
   return arrangeQueue(
     s.available.filter((q) => enabled.has(q.platform) && !skipped.has(q.id)),
-    { order: s.settings.order, minScore: s.settings.minScore, pinned: s.pinned },
+    { order: s.settings.order, minScore: s.settings.minScore, pinned: s.pinned, later: laterIds(s.history) },
   );
+}
+
+function laterIds(history) {
+  return new Set(Object.keys(history).filter((id) => history[id].status === "later"));
 }
 
 function waitingOnYou(history, runs) {
@@ -212,7 +218,7 @@ async function loadQueue() {
       rows.push(...items);
       if (!items.length || rows.length >= Number((data && data.total) || 0)) break;
     }
-    const attempted = new Set(Object.keys(store.history).filter((id) => store.history[id].status !== "failed"));
+    const attempted = new Set(Object.keys(store.history).filter((id) => !RETRYABLE.has(store.history[id].status)));
     for (const id of Object.keys(store.runs)) attempted.add(id);
     const available = rankJobs(rows, { allowed: new Set(ALL_PLATFORMS), skip: attempted });
     set({ available, loading: false, loadedAt: Date.now() });
@@ -235,7 +241,11 @@ function pump() {
       return;
     }
     if (waitingOnYou(store.history, store.runs) >= settings.maxWaiting) {
-      pause(`${settings.maxWaiting} applications are waiting on you. Finish some, then resume.`, "warn");
+      pause(
+        `${settings.maxWaiting} applications are waiting on you. Finish them or set them aside for later, and auto-apply continues.`,
+        "warn",
+        "waiting",
+      );
       return;
     }
     const idx = nextRunnable(queue, { history: store.history, runs: store.runs, perCompany: settings.perCompany });
@@ -349,13 +359,27 @@ function stopRun(jobId) {
   void finishRun(jobId, { status: "needs_you", message: "Stopped by you. The page is left as it was." });
 }
 
-function pause(message, tone = "info") {
-  set({ phase: "paused" });
+async function laterRun(jobId) {
+  await finishRun(jobId, { status: "needs_you", message: "Stopped by you." });
+  await applyLater([jobId]);
+}
+
+function pause(message, tone = "info", reason = null) {
+  set({ phase: "paused", pauseReason: reason });
   if (message) notify(tone, message);
 }
 
+/** A run paused only because too many jobs were waiting continues once the user clears some. */
+function resumeIfUnblocked() {
+  if (store.phase !== "paused" || store.pauseReason !== "waiting") return;
+  if (waitingOnYou(store.history, store.runs) >= store.settings.maxWaiting) return;
+  set({ notice: null });
+  log("info", "Fewer applications are waiting on you, so auto-apply continued.");
+  resume();
+}
+
 function stopAll(message) {
-  set({ phase: "idle", pinned: [] });
+  set({ phase: "idle", pinned: [], pauseReason: null });
   for (const jobId of Object.keys(store.runs)) {
     void finishRun(jobId, { status: "needs_you", message: "Stopped. The page is left as it was." });
   }
@@ -386,7 +410,7 @@ async function start() {
 }
 
 function resume() {
-  set({ phase: "running", notice: null });
+  set({ phase: "running", notice: null, pauseReason: null });
   log("info", "Resumed.");
   pump();
 }
@@ -421,6 +445,7 @@ async function markEntryApplied(jobId) {
     await saveHistory({ ...store.history, [jobId]: { ...h, status: "applied", message: "Marked applied by you.", at: Date.now(), tabOpen: false } });
     if (h && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
     log("ok", `Marked applied: ${h ? h.title : "job"}.`);
+    resumeIfUnblocked();
   } catch (err) {
     notify("danger", (err && err.message) || "Could not mark it applied.");
   }
@@ -431,10 +456,60 @@ async function forgetEntry(jobId) {
   delete history[jobId];
   await saveHistory(history);
   await loadQueue();
+  resumeIfUnblocked();
+}
+
+function entryFor(jobId) {
+  const h = store.history[jobId];
+  if (h) return h;
+  const q = store.available.find((j) => j.id === jobId);
+  return q ? { title: q.title, company: q.company, platform: q.platform, score: q.score, url: q.url, tabId: null } : null;
+}
+
+/** Close the jobs' tabs and queue them again after every job not set aside. */
+async function applyLater(jobIds) {
+  const history = { ...store.history };
+  for (const id of jobIds) {
+    const h = entryFor(id);
+    if (!h) continue;
+    if (h.tabOpen && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
+    history[id] = { ...h, status: "later", message: "Set aside to try again after the rest of the queue.", at: Date.now(), tabOpen: false };
+  }
+  set((s) => ({ pinned: s.pinned.filter((p) => !jobIds.includes(p)), skipped: s.skipped.filter((p) => !jobIds.includes(p)), modal: null }));
+  await saveHistory(history);
+  log("info", jobIds.length === 1 ? `Apply later: ${history[jobIds[0]]?.title || "job"}.` : `${jobIds.length} jobs moved to apply later.`);
+  await loadQueue();
+  if (store.phase === "running") pump();
+  resumeIfUnblocked();
+}
+
+/** Hide the job from the user's lists and never try it again. */
+async function markInvalid(jobId) {
+  const h = entryFor(jobId);
+  if (!h) return;
+  try {
+    await api.reportJobInvalid(jobId, `Marked invalid from auto-apply${h.message ? `: ${h.message}` : "."}`.slice(0, 500));
+  } catch (err) {
+    notify("danger", (err && err.message) || "Could not mark the job invalid.");
+    return;
+  }
+  if (h.tabOpen && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
+  set((s) => ({
+    available: s.available.filter((q) => q.id !== jobId),
+    pinned: s.pinned.filter((p) => p !== jobId),
+  }));
+  await saveHistory({
+    ...store.history,
+    [jobId]: { ...h, status: "invalid", message: "Marked invalid. Hidden from your job lists.", at: Date.now(), tabOpen: false },
+  });
+  log("muted", `Marked invalid: ${h.title || "job"}.`);
+  if (store.phase === "running") pump();
+  resumeIfUnblocked();
 }
 
 async function clearFinished() {
-  const kept = Object.fromEntries(Object.entries(store.history).filter(([, h]) => isWaiting(h) || h.status === "applied"));
+  const keep = (h) => isWaiting(h) || h.status === "applied" || h.status === "later" || h.status === "invalid";
+  const kept = Object.fromEntries(Object.entries(store.history).filter(([, h]) => keep(h)));
   await saveHistory(kept);
   set({ modal: null });
   log("info", "Cleared finished attempts. Skipped and failed jobs can be tried again.");
@@ -468,14 +543,17 @@ function setLive(live) {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   const hit = Object.entries(store.history).find(([, h]) => h.tabId === tabId && h.tabOpen);
-  if (hit) void saveHistory({ ...store.history, [hit[0]]: { ...hit[1], tabOpen: false } });
+  if (hit) void saveHistory({ ...store.history, [hit[0]]: { ...hit[1], tabOpen: false } }).then(resumeIfUnblocked);
 });
 
 // The user submitted a handed-off tab: the background marked it applied and
 // rewrote the history.
 chrome.storage.local.onChanged.addListener((changes) => {
   const next = changes[HISTORY_KEY] && changes[HISTORY_KEY].newValue;
-  if (next) set({ history: next });
+  if (next) {
+    set({ history: next });
+    resumeIfUnblocked();
+  }
 });
 
 // ── UI ──────────────────────────────────────────────────────────────────────
@@ -487,6 +565,8 @@ const STATUS = {
   needs_you: { tone: "warn", label: "Needs you" },
   skipped: { tone: "muted", label: "Skipped" },
   failed: { tone: "danger", label: "Failed" },
+  later: { tone: "brand", label: "Apply later" },
+  invalid: { tone: "muted", label: "Invalid" },
 };
 
 function StatusBadge({ status }) {
@@ -876,6 +956,7 @@ function LiveRuns({ s, now }) {
               <div class="aa-run-actions">
                 ${r.tabId != null ? html`<${Button} size="sm" icon="external" onClick=${() => void focusTab(r.tabId)}>View tab</${Button}>` : null}
                 <${Button} size="sm" variant="ghost" icon="x" onClick=${() => stopRun(id)}>Stop this one</${Button}>
+                <${IconButton} icon="clock" label="Stop and apply later" size=${14} onClick=${() => void laterRun(id)} />
               </div>
             </article>`;
           })}
@@ -894,6 +975,7 @@ function Queue({ s }) {
     ? queue.filter((j) => [j.title, j.company, label(j.platform)].some((v) => String(v || "").toLowerCase().includes(term)))
     : queue;
   const pinned = new Set(s.pinned);
+  const later = laterIds(s.history);
   return html`<${Card}
     title="Queue"
     icon="list"
@@ -920,12 +1002,13 @@ function Queue({ s }) {
               <span class="aa-td aa-td-num">${pinned.has(j.id) ? html`<${Icon} name="pin" size=${12} />` : i + 1}</span>
               <span class="aa-td aa-td-main">
                 <strong title=${j.title}>${j.title}</strong>
-                <span>${j.company || "Company not listed"}</span>
+                <span>${later.has(j.id) && !pinned.has(j.id) ? html`<em class="aa-later-tag">Later</em>` : null}${j.company || "Company not listed"}</span>
               </span>
               <span class="aa-td"><${PlatformChip} platform=${j.platform} /></span>
               <span class="aa-td"><${Score} value=${j.score >= 0 ? j.score : null} /></span>
               <span class="aa-td aa-td-actions">
                 <${IconButton} icon="bolt" label="Run next" size=${14} disabled=${pinned.has(j.id) && i === 0} onClick=${() => pinNext(j.id)} />
+                <${IconButton} icon="clock" label="Apply later" size=${14} disabled=${later.has(j.id)} onClick=${() => void applyLater([j.id])} />
                 <${IconButton} icon="external" label="Open posting" size=${14} onClick=${() => void chrome.tabs.create({ url: j.url })} />
                 <${IconButton} icon="x" label="Skip for this session" size=${14} onClick=${() => skipJob(j.id)} />
               </span>
@@ -947,7 +1030,37 @@ function Waiting({ s, now }) {
   const waiting = Object.entries(s.history)
     .filter(([, h]) => isWaiting(h))
     .sort((a, b) => b[1].at - a[1].at);
-  return html`<${Card} title="Waiting on you" icon="flag" meta=${waiting.length} hint="Finish these in their tabs. Submitting one marks it applied.">
+  const allLater = () =>
+    set({
+      modal: {
+        title: `Move ${waiting.length} jobs to apply later?`,
+        message: "Their tabs close and they go to the end of the queue, after every other job.",
+        confirmLabel: "Apply later",
+        onConfirm: () => void applyLater(waiting.map(([id]) => id)),
+      },
+    });
+  const invalid = (id, h) =>
+    set({
+      modal: {
+        title: "Mark this job invalid?",
+        message: `${h.title || "This job"}${h.company ? ` at ${h.company}` : ""} is hidden from your job lists and auto-apply skips it. You can restore it from Invalid jobs on the web app.`,
+        confirmLabel: "Mark invalid",
+        tone: "danger",
+        onConfirm: () => {
+          set({ modal: null });
+          void markInvalid(id);
+        },
+      },
+    });
+  return html`<${Card}
+    title="Waiting on you"
+    icon="flag"
+    meta=${waiting.length}
+    hint="Finish these in their tabs, or set them aside so the run can continue."
+    action=${waiting.length > 1
+      ? html`<${Button} size="sm" variant="ghost" icon="clock" onClick=${allLater}>All to later</${Button}>`
+      : null}
+  >
     ${waiting.length
       ? html`<div class="aa-list">
           ${waiting.map(
@@ -962,7 +1075,11 @@ function Waiting({ s, now }) {
               <div class="aa-item-actions">
                 <${Button} size="sm" variant="primary" icon="external" onClick=${() => void openEntry(id)}>${h.tabOpen ? "Go to tab" : "Open"}</${Button}>
                 <${Button} size="sm" icon="check" onClick=${() => void markEntryApplied(id)}>Mark applied</${Button}>
-                <${Button} size="sm" variant="ghost" icon="refresh" onClick=${() => void forgetEntry(id)}>Retry</${Button}>
+              </div>
+              <div class="aa-item-actions aa-item-actions-more">
+                <${Button} size="sm" variant="ghost" icon="clock" title="Close the tab and try again after the rest of the queue" onClick=${() => void applyLater([id])}>Apply later</${Button}>
+                <${Button} size="sm" variant="ghost" icon="x" title="Not a real or open job: hide it and never try it again" onClick=${() => invalid(id, h)}>Invalid job</${Button}>
+                <${IconButton} icon="refresh" label="Retry now" size=${14} onClick=${() => void forgetEntry(id)} />
               </div>
             </article>`,
           )}
@@ -971,7 +1088,7 @@ function Waiting({ s, now }) {
   </${Card}>`;
 }
 
-const HISTORY_FILTERS = ["all", "applied", "filled", "needs_you", "failed", "skipped"];
+const HISTORY_FILTERS = ["all", "applied", "filled", "needs_you", "later", "failed", "invalid", "skipped"];
 
 function History({ s, now }) {
   const [status, setStatus] = useState("all");
@@ -994,12 +1111,12 @@ function History({ s, now }) {
       <${Button}
         size="sm"
         variant="ghost"
-        disabled=${!all.some(([, h]) => h.status !== "applied")}
+        disabled=${!all.some(([, h]) => !["applied", "later", "invalid"].includes(h.status))}
         onClick=${() =>
           set({
             modal: {
               title: "Clear finished attempts?",
-              message: "Skipped, failed and filled jobs are removed from history and can be tried again. Applied jobs are kept.",
+              message: "Skipped, failed and filled jobs are removed from history and can be tried again. Applied, apply-later and invalid jobs are kept.",
               confirmLabel: "Clear",
               tone: "danger",
               onConfirm: () => void clearFinished(),
@@ -1030,7 +1147,9 @@ function History({ s, now }) {
               <span class="aa-td aa-td-time">${timeAgo(h.at, now)}</span>
               <span class="aa-td aa-td-actions">
                 ${h.url ? html`<${IconButton} icon="external" label="Open posting" size=${14} onClick=${() => void chrome.tabs.create({ url: h.url })} />` : null}
-                ${h.status !== "applied" ? html`<${IconButton} icon="refresh" label="Retry" size=${14} onClick=${() => void forgetEntry(id)} />` : null}
+                ${h.status !== "applied" && h.status !== "invalid"
+                  ? html`<${IconButton} icon="refresh" label=${h.status === "later" ? "Move back to its place in the queue" : "Retry"} size=${14} onClick=${() => void forgetEntry(id)} />`
+                  : null}
               </span>
             </div>`,
           )}
