@@ -3,6 +3,7 @@ import {
   Briefcase,
   Bug,
   CalendarClock,
+  Coins,
   Cpu,
   Database,
   FileText,
@@ -67,6 +68,7 @@ export const applicantNav: NavSection[] = [
       { to: '/app/profile', label: 'Profile', icon: UserCircle, keywords: ['resume data', 'experience'] },
       { to: '/app/preferences', label: 'Preferences', icon: SlidersHorizontal, keywords: ['settings', 'filters'] },
       { to: '/app/integrations', label: 'Integrations', icon: Puzzle, keywords: ['sheets', 'pumble', 'job sites'] },
+      { to: '/app/plans', label: 'Plans', icon: Coins, keywords: ['credits', 'balance', 'billing', 'packages', 'buy'] },
     ],
   },
 ];

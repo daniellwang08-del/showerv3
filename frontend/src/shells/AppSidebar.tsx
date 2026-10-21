@@ -1,4 +1,7 @@
+import { useQuery } from '@tanstack/react-query';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { fetchStore } from '@/api/storeApi';
+import { STORE_KEY, creditBadge, type CreditBadge } from '@/features/plans/storeModel';
 import { PanelLeft, Search, Sparkles } from 'lucide-react';
 import { NaoWordmark } from '@/components/brand/NaoLogo';
 import { Button } from '@/components/ui/button';
@@ -16,7 +19,37 @@ import { JOBS_PATH, newJobsBadgeText, useNewJobsBadge } from '@/features/jobs/us
 import { useTeamOverview } from '@/features/team/useTeamOverview';
 import { useVisibleNav } from './useVisibleNav';
 
-type NavBadge = { count: number; text: string; label: string; tone: 'solid' | 'soft' };
+type BadgeTone = 'solid' | 'soft' | 'neutral' | 'warn' | 'danger';
+/** `dot` keeps a marker on the collapsed rail; badges without it only show expanded. */
+type NavBadge = { text: string; label: string; tone: BadgeTone; dot: boolean };
+
+const BADGE_TONE: Record<BadgeTone, string> = {
+  solid: 'bg-brand px-1.5 text-white',
+  soft: 'animate-content-in border border-brand/25 bg-brand-soft px-1.5 py-px text-[11px] leading-4 text-brand',
+  neutral: 'border border-sidebar-border bg-sidebar-accent/60 px-1.5 py-px text-[11px] leading-4 text-muted-foreground',
+  warn: 'border border-amber-500/30 bg-amber-500/10 px-1.5 py-px text-[11px] leading-4 text-amber-700 dark:text-amber-300',
+  danger: 'border border-destructive/30 bg-destructive/10 px-1.5 py-px text-[11px] leading-4 text-destructive',
+};
+
+const DOT_TONE: Record<BadgeTone, string> = {
+  solid: 'bg-brand',
+  soft: 'bg-brand',
+  neutral: 'bg-muted-foreground',
+  warn: 'bg-amber-500',
+  danger: 'bg-destructive',
+};
+
+function countBadge(count: number, label: string): NavBadge | null {
+  return count > 0 ? { text: String(count), label, tone: 'solid', dot: true } : null;
+}
+
+const CREDIT_TONE: Record<CreditBadge['level'], BadgeTone> = { ok: 'neutral', low: 'warn', empty: 'danger' };
+
+function creditNavBadge(balance: number | undefined): NavBadge | null {
+  if (balance === undefined) return null;
+  const c = creditBadge(balance);
+  return { text: c.text, label: c.label, tone: CREDIT_TONE[c.level], dot: c.level !== 'ok' };
+}
 
 type AppSidebarProps = {
   nav: NavSection[];
@@ -56,25 +89,20 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const newJobs = useNewJobsBadge(isApplicant);
   const teamInvites = useTeamOverview(isApplicant).data?.invites.length ?? 0;
   const sections = useVisibleNav(nav);
-  const navBadges: Record<string, NavBadge> = {
-    '/app/team': {
-      count: teamInvites,
-      text: String(teamInvites),
-      label: `${teamInvites} team invitation${teamInvites === 1 ? '' : 's'}`,
-      tone: 'solid',
-    },
-    '/admin/users': {
-      count: pendingSignups,
-      text: String(pendingSignups),
-      label: `${pendingSignups} pending signup${pendingSignups === 1 ? '' : 's'}`,
-      tone: 'solid',
-    },
-    [JOBS_PATH]: {
-      count: newJobs,
-      text: `${newJobsBadgeText(newJobs)} new`,
-      label: `${newJobs} new job${newJobs === 1 ? '' : 's'} since your last visit`,
-      tone: 'soft',
-    },
+  const store = useQuery({ queryKey: STORE_KEY, queryFn: fetchStore, staleTime: 60_000, enabled: isApplicant });
+  const navBadges: Record<string, NavBadge | null> = {
+    '/app/team': countBadge(teamInvites, `${teamInvites} team invitation${teamInvites === 1 ? '' : 's'}`),
+    '/admin/users': countBadge(pendingSignups, `${pendingSignups} pending signup${pendingSignups === 1 ? '' : 's'}`),
+    [JOBS_PATH]:
+      newJobs > 0
+        ? {
+            text: `${newJobsBadgeText(newJobs)} new`,
+            label: `${newJobs} new job${newJobs === 1 ? '' : 's'} since your last visit`,
+            tone: 'soft',
+            dot: true,
+          }
+        : null,
+    '/app/plans': isApplicant ? creditNavBadge(store.data?.balance) : null,
   };
 
   const recentChats = isApplicant ? sessions.slice(0, 5) : [];
@@ -148,8 +176,7 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
             {section.label && collapsed ? <div className="mx-3 mb-2 border-t" /> : null}
             <div className="space-y-0.5">
               {section.items.map(({ to, label, icon: Icon, end }) => {
-                const badge = navBadges[to];
-                const shown = badge && badge.count > 0 ? badge : null;
+                const shown = navBadges[to] ?? null;
                 return (
                   <RailTooltip key={to} label={shown ? `${label} (${shown.label})` : label} collapsed={collapsed}>
                     <NavLink
@@ -169,18 +196,15 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
                       {!collapsed && <span className="flex-1 truncate">{label}</span>}
                       {shown &&
                         (collapsed ? (
-                          <span
-                            aria-hidden
-                            className="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand ring-2 ring-sidebar"
-                          />
+                          shown.dot ? (
+                            <span
+                              aria-hidden
+                              className={cn('absolute top-1.5 right-1.5 size-2 rounded-full ring-2 ring-sidebar', DOT_TONE[shown.tone])}
+                            />
+                          ) : null
                         ) : (
                           <span
-                            className={cn(
-                              'shrink-0 rounded-full px-1.5 text-xs font-semibold tabular-nums',
-                              shown.tone === 'solid'
-                                ? 'bg-brand text-white'
-                                : 'animate-content-in border border-brand/25 bg-brand-soft py-px text-[11px] leading-4 text-brand',
-                            )}
+                            className={cn('shrink-0 rounded-full text-xs font-semibold tabular-nums', BADGE_TONE[shown.tone])}
                             aria-label={shown.label}
                             title={shown.label}
                           >
@@ -252,7 +276,8 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
         ) : null}
       </nav>
 
-      <div className={cn('shrink-0 space-y-1 border-t p-2', collapsed && 'px-2.5')}>
+      {/* gap, not space-y: the open account menu appends focus-guard spans here, and space-y would give the trigger a margin. */}
+      <div className={cn('flex shrink-0 flex-col gap-1 border-t p-2', collapsed && 'px-2.5')}>
         {isApplicant ? (
           <RailTooltip label="Assistant ⌘J" collapsed={collapsed}>
             <button

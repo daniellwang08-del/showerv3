@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, renderHook, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -35,6 +36,12 @@ describe('sidebar navigation', () => {
 
   it('puts Team in the applicant sidebar', () => {
     expect(paths(applicantNav)).toContain('/app/team');
+  });
+
+  it('puts Plans in the applicant sidebar, not the admin one', () => {
+    const you = applicantNav.find((s) => s.label === 'You');
+    expect(you?.items.map((i) => i.to)).toContain('/app/plans');
+    expect(paths(adminNav)).not.toContain('/app/plans');
   });
 
   it('hides Shared with me until someone shares a report', async () => {
@@ -84,5 +91,19 @@ describe('account menu', () => {
     );
     await waitFor(() => expect(overview).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('img', { name: 'Team lead' })).not.toBeInTheDocument();
+  });
+
+  it('no longer lists Plans; it lives in the sidebar', async () => {
+    overview.mockResolvedValue({ owned: [], memberships: [], invites: [], team_packages_held: 0 });
+    const user = userEvent.setup();
+    const Wrapper = wrapper();
+    render(
+      <Wrapper>
+        <UserMenu user={{ name: 'Pat', email: 'pat@example.com' }} onLogout={() => {}} variant="applicant" />
+      </Wrapper>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Plans/ })).not.toBeInTheDocument();
   });
 });

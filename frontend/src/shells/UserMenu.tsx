@@ -1,8 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
-import { ChevronsUpDown, Coins, LogOut, Moon, Sun } from 'lucide-react';
-import { fetchStore } from '@/api/storeApi';
-import { STORE_KEY } from '@/features/plans/storeModel';
+import { ChevronsUpDown, LogOut, Moon, Sun } from 'lucide-react';
 import { LeadCrown } from '@/features/team/LeadCrown';
 import { useIsTeamLead } from '@/features/team/useTeamOverview';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -21,23 +17,6 @@ import { useThemeStore } from '@/stores/themeStore';
 
 export type ShellUser = { name?: string | null; email?: string | null };
 
-const credits = new Intl.NumberFormat('en-US');
-
-function ApplicantItems({ onNavigate }: { onNavigate: (to: string) => void }) {
-  const store = useQuery({ queryKey: STORE_KEY, queryFn: fetchStore, staleTime: 5 * 60_000 });
-  return (
-    <DropdownMenuGroup>
-      <DropdownMenuItem onClick={() => onNavigate('/app/plans')}>
-        <Coins />
-        Plans
-        {store.data ? (
-          <span className="ml-auto text-xs text-muted-foreground tabular-nums">{credits.format(store.data.balance)} credits</span>
-        ) : null}
-      </DropdownMenuItem>
-    </DropdownMenuGroup>
-  );
-}
-
 export function UserMenu({
   user,
   onLogout,
@@ -49,7 +28,6 @@ export function UserMenu({
   collapsed?: boolean;
   variant: 'applicant' | 'admin';
 }) {
-  const navigate = useNavigate();
   const theme = useThemeStore((s) => s.theme);
   const toggleTheme = useThemeStore((s) => s.toggleTheme);
   const displayName = user.name || user.email || 'Account';
@@ -97,7 +75,6 @@ export function UserMenu({
           <DropdownMenuLabel className="truncate">{user.email || displayName}</DropdownMenuLabel>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        {variant === 'applicant' ? <ApplicantItems onNavigate={navigate} /> : null}
         <DropdownMenuItem onClick={toggleTheme} closeOnClick={false}>
           {theme === 'dark' ? <Sun /> : <Moon />}
           {theme === 'dark' ? 'Light mode' : 'Dark mode'}
