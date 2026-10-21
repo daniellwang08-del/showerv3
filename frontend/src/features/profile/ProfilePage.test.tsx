@@ -51,6 +51,7 @@ const doc: ProfileSourceDocument = {
 
 function serveProfile(profile: UserProfile | null) {
   api.get.mockImplementation(async (url: string) => {
+    if (url === '/profile/photo') return { data: { photo: null } };
     if (url !== '/profile') throw new Error(`unexpected GET ${url}`);
     if (!profile) throw { response: { status: 404 } };
     return { data: profile };

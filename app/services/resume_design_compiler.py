@@ -25,7 +25,7 @@ from docx.oxml.ns import qn
 from docx.shared import Emu, Pt, RGBColor
 
 from app.models.database import User
-from app.models.resume_design_schemas import ResumeDesign
+from app.models.resume_design_schemas import PHOTO_SIZE_PT, ResumeDesign
 from app.models.resume_template_schemas import ResumeTemplateAiValidation, ResumeTemplateBlueprint
 from app.services.resume_builder_service import (
     _replace_docx_internal,
@@ -1033,6 +1033,49 @@ def _apply_header_contact_scrim(raw: bytes, *, light_text: bool) -> bytes:
 
 # ── Section renderers ──────────────────────────────────────────────────────
 
+_PHOTO_GAP_PT = 14.0
+_PHOTO_GEOMETRY = {"circle": "ellipse", "rounded": "roundRect", "square": "rect"}
+
+
+def _active_photo(design: ResumeDesign) -> tuple[Any, bytes, float] | None:
+    """(spec, image bytes, size in pt) when the design shows a headshot."""
+    spec = getattr(design.layout, "photo", None)
+    if spec is None or not spec.enabled or not spec.data_url:
+        return None
+    raw = _decode_data_url(spec.data_url)
+    if not raw:
+        return None
+    return spec, raw, PHOTO_SIZE_PT.get(spec.size, PHOTO_SIZE_PT["md"])
+
+
+def _add_photo_run(paragraph, raw: bytes, size_pt: float, shape: str) -> bool:
+    """Inline square picture clipped to ``shape``. Text-free, so parsers skip it."""
+    try:
+        pic = paragraph.add_run().add_picture(BytesIO(raw), width=Pt(size_pt), height=Pt(size_pt))
+    except Exception:
+        return False
+    inline = pic._inline
+    geom = inline.find(".//" + qn("a:prstGeom"))
+    if geom is not None:
+        geom.set("prst", _PHOTO_GEOMETRY.get(shape, "ellipse"))
+    doc_pr = inline.find(qn("wp:docPr"))
+    if doc_pr is not None:
+        doc_pr.set("name", "Photo")
+        doc_pr.set("descr", "Headshot photo")
+    return True
+
+
+def _photo_header_extra_pt(design: ResumeDesign, text_pt: float, *, include_photo: bool = True) -> float:
+    """Height a headshot adds on top of the text-only header estimate."""
+    photo = _active_photo(design) if include_photo else None
+    if photo is None:
+        return 0.0
+    size = photo[2]
+    if design.layout.header_align == "center":
+        return size + 6.0
+    return max(0.0, size - text_pt)
+
+
 def _render_header(
     container,
     design: ResumeDesign,
@@ -1044,6 +1087,9 @@ def _render_header(
     # honors tcMar). Paragraph indents here are only for non-band callers.
     band_pad_left_pt: float | None = None,
     band_pad_right_pt: float | None = None,
+    include_photo: bool = True,
+    # Width (pt) taken from the header's text column, e.g. by a photo beside it.
+    reserve_right_pt: float = 0.0,
 ) -> None:
     typo = design.typography
     align = WD_ALIGN_PARAGRAPH.CENTER if design.layout.header_align == "center" else WD_ALIGN_PARAGRAPH.LEFT
@@ -1055,6 +1101,66 @@ def _render_header(
             return
         para.paragraph_format.left_indent = Pt(pad_left)
         para.paragraph_format.right_indent = Pt(pad_right)
+
+    photo = _active_photo(design) if include_photo else None
+    if photo is not None:
+        spec, raw, size = photo
+        if design.layout.header_align == "center":
+            photo_para = container.add_paragraph()
+            photo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            photo_para.paragraph_format.space_before = Pt(0)
+            photo_para.paragraph_format.space_after = Pt(6)
+            _apply_band_insets(photo_para)
+            _add_photo_run(photo_para, raw, size, spec.shape)
+        else:
+            # Text cell first, photo cell second: parsers read name and contacts
+            # before reaching the picture, and the row grows to the taller of the two.
+            page_pt = _page_width_emu(design) / 12_700.0
+            avail_pt = (
+                page_pt
+                - design.layout.hp_left
+                - design.layout.hp_right
+                - pad_left
+                - pad_right
+                - reserve_right_pt
+            )
+            photo_col_pt = size + _PHOTO_GAP_PT
+            text_col_pt = max(avail_pt - photo_col_pt, avail_pt * 0.5)
+            table = container.add_table(rows=1, cols=2)
+            _clear_table_borders(table)
+            widths = [
+                int(round((text_col_pt + pad_left) * 20)),
+                int(round((photo_col_pt + pad_right) * 20)),
+            ]
+            _set_centered_fixed_table(table, widths, contain_tw=sum(widths))
+            text_cell, photo_cell = table.rows[0].cells
+            bottom_tw = int(round((trailing_space_pt or 0.0) * 20))
+            _set_cell_margins(text_cell, top=0, bottom=bottom_tw, left=0, right=0)
+            _set_cell_margins(
+                photo_cell,
+                top=0,
+                bottom=bottom_tw,
+                left=int(round(_PHOTO_GAP_PT * 20)),
+                right=int(round(pad_right * 20)),
+            )
+            text_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            photo_cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            _render_header(
+                text_cell,
+                design,
+                profile,
+                on_dark=on_dark,
+                include_photo=False,
+                reserve_right_pt=reserve_right_pt + photo_col_pt + pad_right,
+                band_pad_left_pt=band_pad_left_pt,
+            )
+            _remove_leading_empty(text_cell)
+            photo_para = photo_cell.paragraphs[0]
+            photo_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            photo_para.paragraph_format.space_before = Pt(0)
+            photo_para.paragraph_format.space_after = Pt(0)
+            _add_photo_run(photo_para, raw, size, spec.shape)
+            return
 
     name_color = _hex_to_rgb("#ffffff" if on_dark else design.colors.heading)
     title_color = _hex_to_rgb("#f1f5f9" if on_dark else design.colors.accent)
@@ -1180,6 +1286,7 @@ def _render_header(
                                 - design.layout.hp_right
                                 - pad_left
                                 - pad_right
+                                - reserve_right_pt
                             )
                             * 20
                         )
@@ -1202,7 +1309,14 @@ def _render_header(
             page_pt = _page_width_emu(design) / 12_700.0
             contain_tw = int(
                 round(
-                    (page_pt - design.layout.hp_left - design.layout.hp_right - pad_left - pad_right)
+                    (
+                        page_pt
+                        - design.layout.hp_left
+                        - design.layout.hp_right
+                        - pad_left
+                        - pad_right
+                        - reserve_right_pt
+                    )
                     * 20
                 )
             )
@@ -1210,6 +1324,9 @@ def _render_header(
             if design.layout.header_align == "center":
                 _set_centered_fixed_table(table, col_widths, contain_tw=contain_tw)
             else:
+                if reserve_right_pt > 0 and sum(col_widths) > contain_tw > 0:
+                    scale = contain_tw / sum(col_widths)
+                    col_widths = [max(1, int(w * scale)) for w in col_widths]
                 # Left-aligned: fixed cols, no centering indent.
                 _set_centered_fixed_table(table, col_widths, contain_tw=sum(col_widths))
             for i, (kind, val, href) in enumerate(contact_items):
@@ -1299,7 +1416,7 @@ def _max_header_gap_contrib_pt(design: ResumeDesign) -> float:
     )
 
 
-def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
+def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any], *, include_photo: bool = True) -> float:
     """Visible header band height (pt) for the behindDoc band image / body spacer.
 
     Uses the browser-measured ``header_metrics.band_pt`` when present, but never
@@ -1310,9 +1427,12 @@ def _effective_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> 
     Also rejects absurdly *large* measurements so a bad measure cannot evacuate the
     body from page 1 via an oversized page-1 spacer.
     """
-    estimate = _header_band_height_pt(design, profile)
+    estimate = _header_band_height_pt(design, profile, include_photo=include_photo)
     ceiling = _max_pinned_band_pt(design)
     metrics = getattr(design.layout, "header_metrics", None)
+    if not include_photo and _active_photo(design) is not None:
+        # The preview measured the band with the photo in it.
+        metrics = None
     if metrics is not None and metrics.band_pt and metrics.band_pt > 0:
         measured = float(metrics.band_pt)
         if measured > ceiling:
@@ -1332,7 +1452,7 @@ def _header_gap_contrib_pt(design: ResumeDesign) -> float:
     return min(max(0.0, design.layout.m_top * 0.6), ceiling)
 
 
-def _header_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> float:
+def _header_band_height_pt(design: ResumeDesign, profile: dict[str, Any], *, include_photo: bool = True) -> float:
     """Estimate the header band height (pt) from typography + padding + present
     content, so the behind-text image is sized to fill exactly that band."""
     # Being marginally generous is safe: the band uses an *exact* row height, so a
@@ -1356,6 +1476,7 @@ def _header_band_height_pt(design: ResumeDesign, profile: dict[str, Any]) -> flo
             content += n_contacts * (row_h + 1.0) + 3.0
         else:
             content += row_h + 3.0
+    content += _photo_header_extra_pt(design, content, include_photo=include_photo)
     # hp_top/hp_bottom are the designed band paddings; +2 pt anti-clip margin.
     return lay.hp_top + lay.hp_bottom + content + 2.0
 
@@ -1452,7 +1573,9 @@ def _solid_fill_png(hex6: str, *, width_px: int, height_px: int) -> bytes:
     return buf.getvalue()
 
 
-def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], section) -> None:
+def _render_header_band(
+    doc, design: ResumeDesign, profile: dict[str, Any], section, *, include_photo: bool = True
+) -> None:
     """Render the header inside a full-bleed shaded band (single-cell table) that
     touches the page's top, left, and right edges.
 
@@ -1501,7 +1624,7 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
     lay = design.layout
     pad_l_tw = max(0, int(round(lay.hp_left * 20)))
     pad_r_tw = max(0, int(round(lay.hp_right * 20)))
-    band_h_pt = _effective_band_height_pt(design, profile)
+    band_h_pt = _effective_band_height_pt(design, profile, include_photo=include_photo)
 
     # Honour asymmetric vertical padding: top-align with hp_top (preview match).
     # Do NOT shade the cell when a behindDoc image supplies the band, cell fill would
@@ -1514,7 +1637,7 @@ def _render_header_band(doc, design: ResumeDesign, profile: dict[str, Any], sect
         right=pad_r_tw,
     )
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
-    _render_header(cell, design, profile, on_dark=on_dark)
+    _render_header(cell, design, profile, on_dark=on_dark, include_photo=include_photo)
     _remove_leading_empty(cell)
     _remove_trailing_empty(cell)
     _set_row_exact_height(table.rows[0], int(round(_FIRST_HEADER_GEOMETRY_PIN_PT * 20)))

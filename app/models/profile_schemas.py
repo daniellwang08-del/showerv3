@@ -2,6 +2,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from datetime import datetime
 import re
 
+from app.models.resume_design_schemas import PHOTO_MAX_CHARS, check_photo_data_url
+
 
 # ---- Nested schemas ----
 
@@ -396,3 +398,18 @@ class ProfileResponse(BaseModel):
     address: dict = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
+
+
+class ProfilePhotoRequest(BaseModel):
+    """Square headshot, already cropped and compressed by the browser."""
+
+    data_url: str = Field(..., min_length=1, max_length=PHOTO_MAX_CHARS)
+
+    @field_validator("data_url")
+    @classmethod
+    def _image_data_url(cls, v: str) -> str:
+        return check_photo_data_url(v)
+
+
+class ProfilePhotoResponse(BaseModel):
+    photo: str | None = None

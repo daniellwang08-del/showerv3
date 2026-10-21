@@ -58,6 +58,7 @@ window.renderResume = async (payload) => {
 
   const fontsLoaded = await loadFaces(design.typography.font_family);
   await decodeImage(design.layout.header_background === 'image' ? design.layout.header_image?.data_url : undefined);
+  await decodeImage(!letter && design.layout.photo?.enabled ? design.layout.photo.data_url : undefined);
 
   let info: ResumeLayoutInfo | null = null;
   root.render(

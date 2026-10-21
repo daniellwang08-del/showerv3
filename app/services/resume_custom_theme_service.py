@@ -18,6 +18,7 @@ def snapshot_design_as_theme(design: ResumeDesign, *, theme_id: str) -> ResumeDe
     snap.content = None
     lay = snap.layout
     lay.header_image = None
+    lay.photo = None
     lay.header_metrics = None
     lay.layout_metrics = None
     if lay.header_background == "image":

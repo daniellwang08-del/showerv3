@@ -38,6 +38,7 @@ import { ColorControls } from '@/components/resumeBuilder/ColorControls';
 import { FormatControls } from '@/components/resumeBuilder/FormatControls';
 import { HeaderControls } from '@/components/resumeBuilder/HeaderControls';
 import { HeaderImageControls } from '@/components/resumeBuilder/HeaderImageControls';
+import { PhotoControls } from '@/components/resumeBuilder/PhotoControls';
 import { SectionDetails } from '@/components/resumeBuilder/SectionDetails';
 import { SectionManager } from '@/components/resumeBuilder/SectionManager';
 import { ContentControls } from '@/components/resumeBuilder/ContentControls';
@@ -47,6 +48,7 @@ import { PAPER_SIZES, ResumePageStack, paperOf } from '@/components/resumeBuilde
 import type { CoverLetterBody } from '@/components/resumeBuilder/ResumePreview';
 import { selectIsDirty, useResumeBuilderStore } from '@/stores/resumeBuilderStore';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { useProfilePhoto } from '@/hooks/useProfilePhoto';
 import { effectiveProfile, normalizeResumeContent, profileToContent, seedHeaderLocation } from '@/utils/resumeContent';
 import {
   fetchLibraryCoverLetter,
@@ -165,6 +167,7 @@ export function ResumeStudioPage() {
   }, [activeId]);
 
   const design = store.design;
+  const profilePhoto = useProfilePhoto();
   const paper: PaperSize = design ? paperOf(design) : 'letter';
   const nativeW = PAPER_SIZES[paper].widthPx;
 
@@ -280,6 +283,7 @@ export function ResumeStudioPage() {
         {design.layout.header_background === 'image' && (
           <HeaderImageControls design={design} image={design.layout.header_image} onChange={store.setHeaderImage} />
         )}
+        <PhotoControls photo={design.layout.photo} profilePhoto={profilePhoto.data} onChange={store.setPhoto} />
       </>
     ),
     sections: (

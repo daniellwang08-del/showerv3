@@ -32,6 +32,7 @@ import {
   type HeaderImage,
   type LayoutConfig,
   type LayoutMetrics,
+  type ResumePhoto,
   type ResumeContent,
   type ResumeDesign,
   type ResumeThemeCatalog,
@@ -134,6 +135,7 @@ export function themeDesignFor(theme: ThemePreset, current: ResumeDesign): Resum
       paper: current.layout.paper ?? 'letter',
       header_image: keepImage,
       header_background: keepImage ? 'image' : t.layout.header_background,
+      photo: current.layout.photo ?? null,
       header_metrics: null,
       layout_metrics: null,
     },
@@ -189,6 +191,7 @@ interface ResumeBuilderState {
   applyColorPreset: (preset: ColorPreset) => void;
   updateLayout: (patch: Partial<LayoutConfig>) => void;
   setHeaderImage: (image: HeaderImage | null) => void;
+  setPhoto: (photo: ResumePhoto | null) => void;
   setHeaderMetrics: (m: { band_pt: number | null; gap_pt: number | null; measured_at_px: number }) => void;
   setLayoutMetrics: (m: LayoutMetrics) => void;
   setContent: (content: ResumeContent) => void;
@@ -595,6 +598,16 @@ export const useResumeBuilderStore = create<ResumeBuilderState>((set, get) => ({
         header_image: image,
         header_background: image ? 'image' : d.layout.header_background === 'image' ? 'soft' : d.layout.header_background,
       },
+    });
+  },
+
+  setPhoto: (photo) => {
+    const d = get().design;
+    if (!d) return;
+    // The photo changes the header height, so the measured band is stale.
+    applyDesign(set, get, {
+      ...d,
+      layout: { ...d.layout, photo, header_metrics: null, layout_metrics: null },
     });
   },
 

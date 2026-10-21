@@ -15,6 +15,7 @@ import {
   DEFAULT_EXPERIENCE_STYLE,
   DEFAULT_SKILLS_STYLE,
   DEFAULT_SUMMARY_STYLE,
+  PHOTO_SIZE_PT,
   SECTION_LABELS,
   headerPadSides,
   marginSides,
@@ -32,6 +33,11 @@ import { formatFlexibleDate, formatFlexiblePeriod } from '../../utils/flexibleDa
 import { formatResumeHeaderLocation } from '../../utils/resumeLocation';
 
 export const PT_TO_PX = 1.3333;
+
+/** Matches the .docx photo cell's left margin (`_PHOTO_GAP_PT`). */
+const PHOTO_GAP_PT = 14;
+/** Word's default roundRect corner is 1/6 of the shorter side. */
+const PHOTO_RADIUS: Record<string, string> = { circle: '50%', rounded: '16.67%', square: '0' };
 
 /** Maps a designed font family to the bundled face that is actually rendered (see
  *  `styles/resumeFonts.css`). The studio and the server-side PDF renderer load the
@@ -1544,6 +1550,29 @@ export function ResumePreview({ design, profile, paged = false, letter = null }:
           : undefined,
   };
 
+  const photo = !letter && l.photo?.enabled && l.photo.data_url ? l.photo : null;
+  const photoPx = photo ? (PHOTO_SIZE_PT[photo.size] ?? PHOTO_SIZE_PT.md) * PT_TO_PX : 0;
+  const photoEl = photo ? (
+    // Decorative: name and contacts stay as real text ahead of it for ATS parsers.
+    <img
+      data-resume-photo
+      src={photo.data_url}
+      alt=""
+      aria-hidden
+      width={photoPx}
+      height={photoPx}
+      style={{
+        display: 'block',
+        flex: '0 0 auto',
+        width: photoPx,
+        height: photoPx,
+        objectFit: 'cover',
+        borderRadius: PHOTO_RADIUS[photo.shape] ?? '50%',
+        margin: l.header_align === 'center' ? `0 auto ${6 * PT_TO_PX}px` : undefined,
+      }}
+    />
+  ) : null;
+
   const header = (
     <div
       data-block
@@ -1564,82 +1593,94 @@ export function ResumePreview({ design, profile, paged = false, letter = null }:
           : 0,
       }}
     >
-      <div style={{ fontSize: base * t.name_scale, color: nameColor, fontWeight: 700, lineHeight: 1.1 }}>
-        {fullName(profile)}
-      </div>
-      {profile?.title && (
-        <div style={{ fontSize: base * 1.1, color: titleColor, marginTop: 2, lineHeight: 1.2 }}>{profile.title}</div>
-      )}
-      {(() => {
-        const items = contactItems(profile);
-        // Match .docx icon height (cap-height ≈ 0.66em) so contacts don't look larger
-        // in the live preview than in the Accurate PDF.
-        const iconSize = base * 0.66;
-        const justify = l.header_align === 'center' ? 'center' : 'flex-start';
-        const iconStyle = l.contact_icons === 'none' || l.contact_icons === 'outline' ? l.contact_icons : 'brand';
-        const showIcon = iconStyle !== 'none';
-        const variant: 'brand' | 'outline' = iconStyle === 'outline' ? 'outline' : 'brand';
-        const offX = (l.contact_icon_offset_x_pt ?? 0) * PT_TO_PX;
-        const offY = (l.contact_icon_offset_y_pt ?? 0) * PT_TO_PX;
-        const iconWrap: CSSProperties =
-          offX || offY
-            ? { display: 'block', transform: `translate(${offX}px, ${offY}px)`, flex: '0 0 auto' }
-            : { display: 'block', flex: '0 0 auto' };
-        if (l.contact_layout === 'stacked') {
-          return (
-            <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {items.map((it, i) => (
-                <div key={i} style={{ ...contactStyle, display: 'flex', alignItems: 'center', gap: 6, justifyContent: justify }}>
-                  {showIcon && (
-                    <span style={iconWrap}>
-                      <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
-                    </span>
-                  )}
-                  <ContactText item={it} />
-                </div>
-              ))}
-            </div>
-          );
+      {photoEl && l.header_align === 'center' && photoEl}
+      <div
+        style={
+          photoEl && l.header_align !== 'center'
+            ? { display: 'flex', alignItems: 'flex-start', gap: PHOTO_GAP_PT * PT_TO_PX }
+            : undefined
         }
-        return (
-          <div
-            style={{
-              ...contactStyle,
-              marginTop: 4,
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: showIcon ? '3px 16px' : '3px 12px',
-              justifyContent: justify,
-              width: '100%',
-              maxWidth: '100%',
-              boxSizing: 'border-box',
-            }}
-          >
-            {items.map((it, i) => (
-              <span
-                key={i}
+      >
+        <div style={photoEl && l.header_align !== 'center' ? { flex: '1 1 auto', minWidth: 0 } : undefined}>
+          <div style={{ fontSize: base * t.name_scale, color: nameColor, fontWeight: 700, lineHeight: 1.1 }}>
+            {fullName(profile)}
+          </div>
+          {profile?.title && (
+            <div style={{ fontSize: base * 1.1, color: titleColor, marginTop: 2, lineHeight: 1.2 }}>{profile.title}</div>
+          )}
+          {(() => {
+            const items = contactItems(profile);
+            // Match .docx icon height (cap-height ≈ 0.66em) so contacts don't look larger
+            // in the live preview than in the Accurate PDF.
+            const iconSize = base * 0.66;
+            const justify = l.header_align === 'center' ? 'center' : 'flex-start';
+            const iconStyle = l.contact_icons === 'none' || l.contact_icons === 'outline' ? l.contact_icons : 'brand';
+            const showIcon = iconStyle !== 'none';
+            const variant: 'brand' | 'outline' = iconStyle === 'outline' ? 'outline' : 'brand';
+            const offX = (l.contact_icon_offset_x_pt ?? 0) * PT_TO_PX;
+            const offY = (l.contact_icon_offset_y_pt ?? 0) * PT_TO_PX;
+            const iconWrap: CSSProperties =
+              offX || offY
+                ? { display: 'block', transform: `translate(${offX}px, ${offY}px)`, flex: '0 0 auto' }
+                : { display: 'block', flex: '0 0 auto' };
+            if (l.contact_layout === 'stacked') {
+              return (
+                <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {items.map((it, i) => (
+                    <div key={i} style={{ ...contactStyle, display: 'flex', alignItems: 'center', gap: 6, justifyContent: justify }}>
+                      {showIcon && (
+                        <span style={iconWrap}>
+                          <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
+                        </span>
+                      )}
+                      <ContactText item={it} />
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+            return (
+              <div
                 style={{
-                  display: 'inline-flex',
+                  ...contactStyle,
+                  marginTop: 4,
+                  display: 'flex',
+                  flexWrap: 'wrap',
                   alignItems: 'center',
-                  gap: 6,
-                  flex: '0 1 auto',
-                  minWidth: 0,
+                  gap: showIcon ? '3px 16px' : '3px 12px',
+                  justifyContent: justify,
+                  width: '100%',
                   maxWidth: '100%',
+                  boxSizing: 'border-box',
                 }}
               >
-                {showIcon && (
-                  <span style={iconWrap}>
-                    <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
+                {items.map((it, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      flex: '0 1 auto',
+                      minWidth: 0,
+                      maxWidth: '100%',
+                    }}
+                  >
+                    {showIcon && (
+                      <span style={iconWrap}>
+                        <ContactIcon kind={it.kind} size={iconSize} color={contactColor} variant={variant} />
+                      </span>
+                    )}
+                    <ContactText item={it} />
+                    {!showIcon && i < items.length - 1 && <span style={{ opacity: 0.5 }}>&nbsp;|</span>}
                   </span>
-                )}
-                <ContactText item={it} />
-                {!showIcon && i < items.length - 1 && <span style={{ opacity: 0.5 }}>&nbsp;|</span>}
-              </span>
-            ))}
-          </div>
-        );
-      })()}
+                ))}
+              </div>
+            );
+          })()}
+        </div>
+        {photoEl && l.header_align !== 'center' && photoEl}
+      </div>
     </div>
   );
 

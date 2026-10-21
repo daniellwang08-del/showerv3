@@ -8,9 +8,10 @@ so the existing fill + PDF pipeline renders it unchanged.
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SectionId = Literal["summary", "skills", "experience", "education", "certificates"]
 HeaderAlign = Literal["left", "center"]
@@ -89,6 +90,40 @@ class HeaderImage(BaseModel):
     text: HeaderImageText = "light"
 
 
+PhotoShape = Literal["circle", "rounded", "square"]
+PhotoSize = Literal["sm", "md", "lg"]
+PHOTO_SIZE_PT: dict[str, float] = {"sm": 54.0, "md": 72.0, "lg": 90.0}
+PHOTO_MAX_CHARS = 1_500_000
+_PHOTO_DATA_URL = re.compile(r"^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=\s]+$")
+
+
+def check_photo_data_url(v: str) -> str:
+    if not _PHOTO_DATA_URL.match(v):
+        raise ValueError("Photo must be a JPEG, PNG or WebP image.")
+    return v
+
+
+class ResumePhoto(BaseModel):
+    """Optional headshot beside the header.
+
+    The frontend crops it square and compresses it, so ``data_url`` stays small.
+    The name and contacts remain real text ahead of the picture in reading order,
+    which keeps the resume parseable by applicant tracking systems.
+    """
+
+    data_url: str = Field(..., max_length=PHOTO_MAX_CHARS)
+    enabled: bool = True
+    shape: PhotoShape = "circle"
+    size: PhotoSize = "md"
+    # "upload" for a file chosen in the studio, "profile" when copied from the profile photo.
+    source: Literal["upload", "profile"] = "upload"
+
+    @field_validator("data_url")
+    @classmethod
+    def _image_data_url(cls, v: str) -> str:
+        return check_photo_data_url(v)
+
+
 class HeaderMetrics(BaseModel):
     """Exact header-band geometry measured in the browser preview (pt).
 
@@ -157,6 +192,7 @@ class LayoutConfig(BaseModel):
     header_pad_bottom_pt: float | None = Field(default=None, ge=0, le=120)
     header_pad_left_pt: float | None = Field(default=None, ge=0, le=120)
     header_image: HeaderImage | None = None
+    photo: ResumePhoto | None = None
     # Browser-measured band geometry (pt); when present the compiler pins the band to
     # these exact values instead of estimating, so preview and PDF match to the point.
     header_metrics: HeaderMetrics | None = None

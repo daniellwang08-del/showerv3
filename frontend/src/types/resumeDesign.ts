@@ -18,6 +18,24 @@ export interface HeaderImage {
 }
 export type ContactIconStyle = 'brand' | 'outline' | 'none';
 
+export type PhotoShape = 'circle' | 'rounded' | 'square';
+export type PhotoSize = 'sm' | 'md' | 'lg';
+
+/** Optional headshot beside the resume header. Never used on cover letters. */
+export interface ResumePhoto {
+  /** Square, cropped and compressed JPEG data URL. */
+  data_url: string;
+  /** Hidden photos stay saved so they can be switched back on per resume. */
+  enabled: boolean;
+  shape: PhotoShape;
+  size: PhotoSize;
+  /** "profile" when copied from the profile photo, "upload" for a studio file. */
+  source: 'upload' | 'profile';
+}
+
+/** Rendered photo edge in points; mirrors PHOTO_SIZE_PT on the backend. */
+export const PHOTO_SIZE_PT: Record<PhotoSize, number> = { sm: 54, md: 72, lg: 90 };
+
 export type SummarySurface = 'none' | 'tint' | 'solid' | 'gradient' | 'outline';
 export type SummaryBorder = 'none' | 'full' | 'left' | 'top' | 'bottom' | 'x';
 export type SummaryTitleMode = 'above' | 'hidden' | 'inline' | 'side' | 'centered' | 'overline' | 'badge';
@@ -183,6 +201,7 @@ export interface LayoutConfig {
   header_pad_bottom_pt?: number | null;
   header_pad_left_pt?: number | null;
   header_image?: HeaderImage | null;
+  photo?: ResumePhoto | null;
   header_metrics?: HeaderMetrics | null;
   layout_metrics?: LayoutMetrics | null;
   contact_layout: ContactLayout;

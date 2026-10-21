@@ -64,9 +64,9 @@ def compile_cover_letter_design(design: ResumeDesign, user: User, out_path: Path
     # Identical header to the resume (band when a header background is set, otherwise
     # the plain inline header) so the two documents share one letterhead.
     if design.layout.header_background != "none":
-        _render_header_band(doc, design, profile, section)
+        _render_header_band(doc, design, profile, section, include_photo=False)
     else:
-        _render_header(doc, design, profile, trailing_space_pt=design.layout.hp_bottom)
+        _render_header(doc, design, profile, trailing_space_pt=design.layout.hp_bottom, include_photo=False)
 
     # The only body section: the summary block relabeled "Cover Letter", holding the
     # body placeholder. All other resume sections are intentionally left out.

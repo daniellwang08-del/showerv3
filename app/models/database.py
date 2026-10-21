@@ -50,6 +50,8 @@ class User(Base):
     # Heavy profile payloads, deferred so auth/admin list queries stay light.
     # Accessing any of these columns loads that column on demand.
     profile_summary = deferred(Column(Text, nullable=True))
+    # Square headshot as a data:image/... URL. Independent of any resume photo.
+    profile_photo = deferred(Column(Text, nullable=True))
     technical_skills = deferred(Column(JSON, default=list))
     work_experience = deferred(Column(JSON, default=list))
     education = deferred(Column(JSON, default=list))

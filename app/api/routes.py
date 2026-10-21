@@ -40,6 +40,8 @@ from app.models.auth_schemas import (
 from app.models.profile_schemas import (
     ProfileResponse,
     ProfileCreateRequest,
+    ProfilePhotoRequest,
+    ProfilePhotoResponse,
     ResumeParseResponse,
     EEOPreferences,
     AddressInfo,
@@ -818,6 +820,38 @@ async def put_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=format_profile_unexpected_error(e, "Failed to save profile"),
         )
+
+
+async def _write_profile_photo(user_id: str, photo: str | None) -> ProfilePhotoResponse:
+    async with get_session() as session:
+        result = await session.execute(sa_update(User).where(User.id == user_id).values(profile_photo=photo))
+        if not result.rowcount:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        await session.commit()
+    return ProfilePhotoResponse(photo=photo)
+
+
+@router.get("/profile/photo", response_model=ProfilePhotoResponse)
+async def get_profile_photo(current_user: dict = Depends(get_current_user)) -> ProfilePhotoResponse:
+    """The profile photo, kept out of GET /profile so that payload stays small."""
+    async with get_session() as session:
+        photo = (
+            await session.execute(select(User.profile_photo).where(User.id == current_user["user_id"]))
+        ).scalar_one_or_none()
+    return ProfilePhotoResponse(photo=photo or None)
+
+
+@router.put("/profile/photo", response_model=ProfilePhotoResponse)
+async def put_profile_photo(
+    request: ProfilePhotoRequest,
+    current_user: dict = Depends(get_current_user),
+) -> ProfilePhotoResponse:
+    return await _write_profile_photo(current_user["user_id"], request.data_url)
+
+
+@router.delete("/profile/photo", response_model=ProfilePhotoResponse)
+async def delete_profile_photo(current_user: dict = Depends(get_current_user)) -> ProfilePhotoResponse:
+    return await _write_profile_photo(current_user["user_id"], None)
 
 
 @router.patch("/profile/eeo", response_model=ProfileResponse)

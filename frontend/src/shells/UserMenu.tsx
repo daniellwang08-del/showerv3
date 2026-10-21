@@ -5,7 +5,8 @@ import { fetchStore } from '@/api/storeApi';
 import { STORE_KEY } from '@/features/plans/storeModel';
 import { LeadCrown } from '@/features/team/LeadCrown';
 import { useIsTeamLead } from '@/features/team/useTeamOverview';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { useProfilePhoto } from '@/hooks/useProfilePhoto';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,6 +55,7 @@ export function UserMenu({
   const displayName = user.name || user.email || 'Account';
   const initial = displayName.charAt(0).toUpperCase();
   const isLead = useIsTeamLead(variant === 'applicant');
+  const photo = useProfilePhoto(variant === 'applicant');
 
   return (
     <DropdownMenu>
@@ -66,6 +68,7 @@ export function UserMenu({
       >
         <span className="relative shrink-0">
           <Avatar className={cn('size-8', isLead && 'ring-2 ring-amber-400/70 ring-offset-1 ring-offset-sidebar')}>
+            {photo.data ? <AvatarImage src={photo.data} alt="" /> : null}
             <AvatarFallback className="bg-brand text-xs font-semibold text-brand-foreground">{initial}</AvatarFallback>
           </Avatar>
           {isLead ? <LeadCrown /> : null}

@@ -51,6 +51,7 @@ import {
   type FormSectionId,
   type SectionId,
 } from './profileSections';
+import { ProfilePhotoCard } from './ProfilePhotoCard';
 import { PROFILE_QUERY_KEY, ResumeImportCard } from './ResumeImportCard';
 import { SourceDocumentsSection } from './SourceDocumentsSection';
 
@@ -336,6 +337,7 @@ function ProfileEditor({
         <SectionNav active={active} editing={editing} filled={filled} onSelect={(id) => scrollToSection(id)} />
 
         <div className="flex min-w-0 flex-col gap-4">
+          {isNew ? null : <ProfilePhotoCard name={`${saved.name_first} ${saved.name_last}`} />}
           {FORM_SECTIONS.map((id) => {
             const { description, View, Edit } = SECTION_UI[id];
             const isEditing = editing.has(id);
