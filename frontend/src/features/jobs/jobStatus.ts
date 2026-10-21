@@ -172,6 +172,8 @@ export type SourceOriginIcon = 'user' | 'users' | 'career' | 'globe';
 export type SourceOrigin = {
   /** Short tooltip / accessible name. */
   label: string;
+  /** Who reported the job, as the Reporter column shows it ("You", "Raoyin", "Team", "LinkedIn"). */
+  name: string;
   /** Job-site logo under /public/integrations/job-sites when available. */
   logoSrc?: string;
   /** Fallback Lucide glyph when there is no logo. */
@@ -201,21 +203,31 @@ export function sourceLabel(job: DashboardJob): string {
   return job.domain.replace(/^(www|jobs|careers|boards|job-boards)\./, '') || '-';
 }
 
+/** Who reported the row, short enough for a table cell. */
+export function reporterName(job: DashboardJob): string {
+  if (job.from_me) return 'You';
+  if (job.added_from === 'manual') return job.added_by_name || 'Teammate';
+  if (job.added_from === 'admin_manual') return 'Team';
+  return sourceLabel(job);
+}
+
 /** Icon-first origin for the jobs table (logo when we have one, else a simple glyph). */
 export function sourceOrigin(job: DashboardJob): SourceOrigin {
   const label = sourceLabel(job);
-  if (job.from_me) return { label, icon: 'user' };
-  if (job.added_from === 'manual' || job.added_from === 'admin_manual') return { label, icon: 'users' };
+  const name = reporterName(job);
+  if (job.from_me) return { label, name, icon: 'user' };
+  if (job.added_from === 'manual' || job.added_from === 'admin_manual') return { label, name, icon: 'users' };
 
   const slug = normalizeSourceSlug(job.source) || normalizeSourceSlug(job.added_from);
   if (slug && JOB_SITE_LOGO_SLUGS.has(slug)) {
-    return { label, logoSrc: `/integrations/job-sites/${slug}.svg`, icon: 'globe' };
+    return { label, name, logoSrc: `/integrations/job-sites/${slug}.svg`, icon: 'globe' };
   }
   // ATS / company career boards (Greenhouse, Lever, Ashby, …) or bare domains.
   if (isCareerPageHost(job.domain, job.source_url) || slug === 'greenhouse' || slug === 'lever' || slug === 'ashby') {
-    return { label: label === '-' ? 'Career page' : label, icon: 'career' };
+    const careerLabel = label === '-' ? 'Career page' : label;
+    return { label: careerLabel, name: careerLabel, icon: 'career' };
   }
-  return { label, icon: 'globe' };
+  return { label, name, icon: 'globe' };
 }
 
 export function relativeTime(dateStr: string | null | undefined, now = Date.now()): string {

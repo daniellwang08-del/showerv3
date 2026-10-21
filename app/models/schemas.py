@@ -224,6 +224,8 @@ class DashboardJobResponse(BaseModel):
     title: str | None
     company: str
     location: str | None
+    # Standard labels for ``location`` ("Kent, WA, US", "All, US"); empty when unresolved.
+    location_display: list[str] = []
     # ISO 3166-1 alpha-2 codes resolved from ``location`` for flags / filters.
     location_countries: list[str] = []
     # True when ``location`` names no place and the countries were inferred.

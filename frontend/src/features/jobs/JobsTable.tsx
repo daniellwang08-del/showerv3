@@ -64,13 +64,13 @@ const ALL: JobsTableTier[] = ['compact', 'medium', 'full'];
 const WIDE: JobsTableTier[] = ['medium', 'full'];
 const FULL: JobsTableTier[] = ['full'];
 
-// Role and Location share leftover width with Status. Origin is icon-only.
+// Role and Location share leftover width with Status.
 export const JOB_COLUMNS: Column[] = [
   { id: 'select', header: '', width: '2.5rem', tiers: ALL },
   { id: 'title', header: 'Role', width: 'minmax(12rem, 1.4fr)', compactWidth: 'minmax(0, 1fr)', sortField: 'title', tiers: ALL },
   { id: 'location', header: 'Location', width: 'minmax(10rem, 1.3fr)', compactWidth: 'minmax(5rem, 1fr)', sortField: 'location', tiers: ALL },
   { id: 'mode', header: 'Mode', width: '5.5rem', tiers: FULL },
-  { id: 'source', header: 'From', width: '3rem', tiers: WIDE, align: 'center' },
+  { id: 'source', header: 'Reporter', width: '7.5rem', tiers: WIDE },
   { id: 'added', header: 'Added', width: '4.5rem', sortField: 'created_at', tiers: WIDE, align: 'end' },
   { id: 'match', header: 'Match', width: '7.5rem', compactWidth: '4.75rem', sortField: 'match_score', tiers: ALL },
   { id: 'docs', header: 'Docs', width: '5rem', tiers: WIDE },
@@ -460,6 +460,7 @@ function Cell({
       return (
         <JobLocationLabel
           location={job.location}
+          display={job.location_display}
           countries={job.location_countries}
           inferred={job.location_country_inferred}
           className="w-full text-xs text-muted-foreground"
@@ -636,18 +637,18 @@ function SourceOriginCell({ job }: { job: DashboardJob }) {
   return (
     <Tooltip>
       <TooltipTrigger
-        render={
-          <span
-            aria-label={origin.label}
-            className="inline-flex size-7 items-center justify-center rounded-md border border-border/60 bg-muted/40"
-          />
-        }
+        render={<span aria-label={origin.label} className="inline-flex min-w-0 max-w-full items-center gap-1.5" />}
       >
-        {origin.logoSrc ? (
-          <img src={origin.logoSrc} alt="" className="size-4 object-contain" />
-        ) : (
-          <FallbackIcon className="size-3.5 text-muted-foreground" aria-hidden />
-        )}
+        <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/60 bg-muted/40">
+          {origin.logoSrc ? (
+            <img src={origin.logoSrc} alt="" className="size-3.5 object-contain" />
+          ) : (
+            <FallbackIcon className="size-3.5 text-muted-foreground" aria-hidden />
+          )}
+        </span>
+        <span className={cn('truncate text-xs', job.from_me ? 'font-medium text-foreground' : 'text-muted-foreground')}>
+          {origin.name}
+        </span>
       </TooltipTrigger>
       <TooltipContent>{origin.label}</TooltipContent>
     </Tooltip>

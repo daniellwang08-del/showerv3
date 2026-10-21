@@ -3041,7 +3041,7 @@ def _row_to_dashboard_job(
     submitter_names: dict[str, str] | None = None,
     visibility: tuple[str, int] | None = None,
 ) -> DashboardJobResponse:
-    from app.services.job_location_classifier import display_location_countries
+    from app.services.location_display import display_location
 
     (
         job,
@@ -3072,9 +3072,7 @@ def _row_to_dashboard_job(
         title=job.title,
         is_remote=bool(meta.get("is_remote", False)),
     )
-    location_countries, location_country_inferred = display_location_countries(
-        job.location, ext_remote_policy
-    )
+    shown_location = display_location(job.location, ext_remote_policy)
     pool_added_at = ujs_created_at or job.created_at
     applicant_manual = bool(meta.get("submitted_data")) and not _is_admin_manual_submission(meta)
     submitter_id = meta.get("submitted_by_user_id")
@@ -3092,8 +3090,9 @@ def _row_to_dashboard_job(
         title=job.title,
         company=job.company,
         location=job.location,
-        location_countries=location_countries,
-        location_country_inferred=location_country_inferred,
+        location_display=list(shown_location.places),
+        location_countries=list(shown_location.countries),
+        location_country_inferred=shown_location.inferred,
         posted_date=job.posted_date,
         experience_level=job.experience_level,
         industry=job.industry,

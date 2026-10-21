@@ -341,11 +341,12 @@ export function HomePage({ firstName, userId }: { firstName?: string; userId?: s
                     <p className="truncate text-sm font-medium">{job.title || 'Untitled role'}</p>
                     <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-muted-foreground">
                       <span className="truncate">{job.company}</span>
-                      {job.location || job.location_country_inferred ? (
+                      {job.location || job.location_display?.length || job.location_country_inferred ? (
                         <>
                           <span aria-hidden>·</span>
                           <JobLocationLabel
                             location={job.location}
+                            display={job.location_display}
                             countries={job.location_countries}
                             inferred={job.location_country_inferred}
                             className="min-w-0"

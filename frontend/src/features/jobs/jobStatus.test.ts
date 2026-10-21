@@ -8,6 +8,7 @@ import {
   isInFlight,
   jobStage,
   relativeTime,
+  reporterName,
   sourceLabel,
   sourceOrigin,
   workMode,
@@ -95,9 +96,18 @@ describe('formatting helpers', () => {
     expect(sourceLabel(makeJob({ source: null, added_from: null, domain: 'boards.greenhouse.io' }))).toBe('Career page');
   });
 
-  it('resolves icon origins for the From column', () => {
+  it('names the reporter of each row', () => {
+    expect(reporterName(makeJob({ added_from: 'manual', from_me: true }))).toBe('You');
+    expect(reporterName(makeJob({ added_from: 'manual', from_me: false, added_by_name: 'Raoyin' }))).toBe('Raoyin');
+    expect(reporterName(makeJob({ added_from: 'manual', from_me: false }))).toBe('Teammate');
+    expect(reporterName(makeJob({ added_from: 'admin_manual', source: null }))).toBe('Team');
+    expect(reporterName(makeJob({ source: 'linkedin' }))).toBe('LinkedIn');
+  });
+
+  it('resolves icon origins for the Reporter column', () => {
     expect(sourceOrigin(makeJob({ source: 'linkedin' }))).toEqual({
       label: 'LinkedIn',
+      name: 'LinkedIn',
       logoSrc: '/integrations/job-sites/linkedin.svg',
       icon: 'globe',
     });

@@ -29,6 +29,35 @@ describe('JobLocationLabel', () => {
     expect(getByText('-')).toBeInTheDocument();
   });
 
+  it('shows the standard label with its own flag', () => {
+    const { container, getByText, queryByText } = render(
+      <JobLocationLabel location="Kent, WA" display={['Kent, WA, US']} countries={['US']} />,
+    );
+    expect(getByText('Kent, WA, US')).toBeInTheDocument();
+    expect(container.querySelector('.country-flag')?.textContent).toBe('\u{1F1FA}\u{1F1F8}');
+    expect(queryByText(/^\+/)).toBeNull();
+  });
+
+  it('shows the first place with a count and lists every place in the tooltip', () => {
+    const { container, getByText } = render(
+      <JobLocationLabel
+        location="London / Toronto"
+        display={['London, UK', 'Toronto, ON, CA']}
+        countries={['GB', 'CA']}
+      />,
+    );
+    expect(getByText('London, UK')).toBeInTheDocument();
+    expect(getByText('+1')).toBeInTheDocument();
+    expect(container.querySelector('.country-flag')?.textContent).toBe('\u{1F1EC}\u{1F1E7}');
+    expect(container.firstElementChild?.getAttribute('title')).toContain('Toronto, ON, CA');
+  });
+
+  it('shows a region label without a flag', () => {
+    const { container, getByText } = render(<JobLocationLabel location="EMEA" display={['EMEA']} countries={[]} />);
+    expect(getByText('EMEA')).toBeInTheDocument();
+    expect(container.querySelector('.country-flag')).toBeNull();
+  });
+
   it('shows no flag span when no country is known', () => {
     const { container } = render(<JobLocationLabel location="Multiple Locations" />);
     expect(container.querySelector('.country-flag')).toBeNull();

@@ -54,6 +54,8 @@ export interface DashboardJob {
   title: string | null;
   company: string;
   location: string | null;
+  /** Standard labels for ``location`` ("Kent, WA, US", "All, US"); empty when unresolved. */
+  location_display?: string[];
   /** ISO 3166-1 alpha-2 codes resolved from ``location`` for flags. */
   location_countries?: string[];
   /** True when ``location`` names no place (blank, "Remote") and the countries were inferred. */

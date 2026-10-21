@@ -232,7 +232,11 @@ CITY_TO_CODE: dict[str, str] = {
     "lausanne": "CH", "brussels": "BE", "bruxelles": "BE", "antwerp": "BE",
     "warsaw": "PL", "krakow": "PL", "kraków": "PL", "prague": "CZ",
     "praha": "CZ", "budapest": "HU", "bucharest": "RO", "sofia": "BG",
-    "athens gr": "GR", "luxembourg city": "LU",
+    "athens gr": "GR", "luxembourg city": "LU", "belgrade": "RS", "novi sad": "RS",
+    "vilnius": "LT", "kaunas": "LT", "riga": "LV", "tallinn": "EE", "kyiv": "UA",
+    "lviv": "UA", "zagreb": "HR", "ljubljana": "SI", "bratislava": "SK", "brno": "CZ",
+    "warszawa": "PL", "wroclaw": "PL", "wrocław": "PL", "gdansk": "PL", "gdańsk": "PL",
+    "poznan": "PL", "poznań": "PL", "cluj-napoca": "RO",
     # Middle East / Africa
     "dubai": "AE", "abu dhabi": "AE", "tel aviv": "IL", "jerusalem": "IL",
     "haifa": "IL", "riyadh": "SA", "jeddah": "SA", "doha": "QA",
@@ -253,7 +257,8 @@ CITY_TO_CODE: dict[str, str] = {
     "mexico city": "MX", "ciudad de méxico": "MX", "são paulo": "BR",
     "sao paulo": "BR", "rio de janeiro": "BR", "buenos aires": "AR",
     "santiago": "CL", "bogotá": "CO", "bogota": "CO", "lima": "PE",
-    "montevideo": "UY",
+    "montevideo": "UY", "medellín": "CO", "medellin": "CO", "guadalajara": "MX",
+    "monterrey": "MX", "santo domingo": "DO",
 }
 
 # Tokens that mean the posting is open to any country.
