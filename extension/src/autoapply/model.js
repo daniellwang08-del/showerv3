@@ -121,12 +121,20 @@ export function closedWithoutSubmit(entry, now = Date.now()) {
   return { ...entry, status: "later", message: CLOSED_UNSUBMITTED, at: now, tabOpen: false };
 }
 
-/** Finished attempts in the last `days`: how many and how many were submitted. */
+const NOT_ATTEMPTS = new Set(["skipped", "later", "invalid"]);
+
+/**
+ * Finished attempts in the last `days`. A dry run's filled form is a success:
+ * it is as far as a dry run goes. Skipped, later and invalid jobs were never
+ * attempts.
+ */
 export function successStats(history, { days = 7, now = Date.now() } = {}) {
   const since = now - days * 24 * 60 * 60 * 1000;
-  const recent = Object.values(history || {}).filter((h) => h.at >= since && h.status !== "skipped" && h.status !== "later");
+  const recent = Object.values(history || {}).filter((h) => h.at >= since && !NOT_ATTEMPTS.has(h.status));
   const applied = recent.filter((h) => h.status === "applied").length;
-  return { attempts: recent.length, applied, rate: recent.length ? Math.round((applied / recent.length) * 100) : null };
+  const filled = recent.filter((h) => h.status === "filled").length;
+  const ok = applied + filled;
+  return { attempts: recent.length, applied, filled, rate: recent.length ? Math.round((ok / recent.length) * 100) : null };
 }
 
 export function filterHistory(entries, { status = "all", q = "" } = {}) {

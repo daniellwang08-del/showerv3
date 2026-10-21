@@ -4,6 +4,7 @@
 // window focus, and keeps the history so a job is not attempted twice.
 
 import * as api from "../api.js";
+import { localTimezone } from "../panel/format.js";
 import * as storage from "../storage.js";
 import { html, render, useEffect, useState } from "../lib/preact.js";
 import { Badge, Banner, Button, Empty, IconButton, Modal, Score, Segmented, Spinner, Toggle } from "../panel/ui/components.js";
@@ -74,6 +75,7 @@ let store = {
   pauseReason: null, // "waiting" when paused by the waiting-on-you limit
   loading: false,
   loadedAt: 0,
+  account: null, // { appliedToday, ready } from the server
   notice: null,
   windowId: null,
   log: [],
@@ -210,8 +212,16 @@ async function ensureWindow() {
   return win.id;
 }
 
+// The account's own numbers (the panel and web app show these), so the
+// console agrees with them instead of counting only its local history.
+async function loadAccount() {
+  const data = await api.getHome(localTimezone()).catch(() => null);
+  if (data && data.counts) set({ account: { appliedToday: Number(data.counts.applied_today) || 0, ready: Number(data.counts.ready) || 0 } });
+}
+
 async function loadQueue() {
   set({ loading: true });
+  void loadAccount();
   try {
     const rows = [];
     for (let page = 1; page <= READY_PAGES; page++) {
@@ -309,7 +319,7 @@ async function rememberHandOff(tabId, jobId) {
     .catch(() => {});
 }
 
-const OUTCOME_TONE = { applied: "ok", filled: "info", needs_you: "warn", skipped: "muted", failed: "danger", later: "info" };
+const OUTCOME_TONE = { applied: "ok", filled: "info", needs_you: "warn", skipped: "muted", failed: "danger", later: "info", invalid: "muted" };
 
 async function finishRun(jobId, outcome) {
   const run = store.runs[jobId];
@@ -339,6 +349,18 @@ async function finishRun(jobId, outcome) {
   } else if (tabId != null && status === "skipped") {
     await chrome.tabs.remove(tabId).catch(() => {});
     tabOpen = false;
+  } else if (status === "invalid") {
+    try {
+      await api.reportJobInvalid(jobId, `Auto-apply: ${outcome.message || "posting no longer available."}`.slice(0, 500));
+    } catch (err) {
+      log("warn", `Could not hide ${run.title || "the job"} from your lists: ${(err && err.message) || "request failed"}.`);
+    }
+    set((s) => ({ available: s.available.filter((q) => q.id !== jobId), pinned: s.pinned.filter((p) => p !== jobId) }));
+    if (tabId != null) {
+      await chrome.storage.session.remove("aaTab:" + tabId).catch(() => {});
+      await chrome.tabs.remove(tabId).catch(() => {});
+    }
+    tabOpen = false;
   }
 
   const entry = {
@@ -361,6 +383,7 @@ async function finishRun(jobId, outcome) {
   await saveHistory({ ...store.history, [jobId]: entry });
   if (store.phase === "paused" && !Object.keys(store.runs).length) notify("info", "Paused. Running applications have finished.");
   if (status === "later") await loadQueue();
+  else if (status === "applied") void loadAccount();
   pump();
 }
 
@@ -755,6 +778,9 @@ function Stats({ s }) {
   const openTabs = waitingOnYou(s.history, s.runs);
   const week = successStats(s.history);
   const offSites = s.available.length - onSites;
+  const accountReady = s.account ? s.account.ready : null;
+  const accountToday = s.account ? Math.max(s.account.appliedToday, today) : today;
+  const capLeft = Math.max(0, s.settings.dailyCap - today);
   return html`<div class="aa-stats">
     <${Stat}
       icon="layers"
@@ -762,7 +788,9 @@ function Stats({ s }) {
       value=${s.loading && !s.loadedAt ? html`<${Spinner} size=${16} />` : queue.length}
       sub=${hidden > 0
         ? `${hidden} hidden by your filters`
-        : offSites > 0
+        : accountReady != null && accountReady > queue.length
+          ? `Of ${accountReady} ready, ${accountReady - queue.length} are on sites that are off or already tried`
+          : offSites > 0
           ? `${offSites} more on sites that are off`
           : sites
             ? `Across ${sites} site${sites === 1 ? "" : "s"}`
@@ -779,9 +807,9 @@ function Stats({ s }) {
       icon="check"
       tone="ok"
       label="Applied today"
-      value=${html`${today}<small> / ${s.settings.dailyCap}</small>`}
+      value=${accountToday}
       meter=${html`<${Meter} value=${today} max=${s.settings.dailyCap} tone="ok" />`}
-      sub=${s.settings.dryRun ? "Dry run submits nothing" : `${Math.max(0, s.settings.dailyCap - today)} left today`}
+      sub=${s.settings.dryRun ? `${today} by auto-apply, dry run is on` : `${today} by auto-apply, ${capLeft} left today`}
     />
     <${Stat}
       icon="flag"
@@ -796,7 +824,11 @@ function Stats({ s }) {
       tone="info"
       label="Success, last 7 days"
       value=${week.rate == null ? "-" : `${week.rate}%`}
-      sub=${week.attempts ? `${week.applied} applied of ${week.attempts} tried` : "No attempts yet"}
+      sub=${week.attempts
+        ? week.filled
+          ? `${week.applied} applied, ${week.filled} filled of ${week.attempts} tried`
+          : `${week.applied} applied of ${week.attempts} tried`
+        : "No attempts yet"}
     />
   </div>`;
 }

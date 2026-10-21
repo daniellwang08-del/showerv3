@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { APPLY_ATTR, APPLY_TEXT, MIN_FORM_FIELDS, NOT_APPLY_TEXT, isApplyText, probeApplyPage, reachApplicationForm } from "../src/applyForm.js";
+import { APPLY_ATTR, APPLY_TEXT, GONE_TEXT, GONE_URL, MIN_FORM_FIELDS, NOT_APPLY_TEXT, isApplyText, isGoneText, probeApplyPage, reachApplicationForm } from "../src/applyForm.js";
 import { CLOSED_UNSUBMITTED, closedWithoutSubmit } from "../src/autoapply/model.js";
 
-const RULES = { applyText: APPLY_TEXT, notApplyText: NOT_APPLY_TEXT, applyAttr: APPLY_ATTR, minFields: MIN_FORM_FIELDS };
+const RULES = { applyText: APPLY_TEXT, notApplyText: NOT_APPLY_TEXT, applyAttr: APPLY_ATTR, minFields: MIN_FORM_FIELDS, goneText: GONE_TEXT, goneUrl: GONE_URL };
 
 test("apply button text", () => {
   for (const t of ["Apply now", "APPLY", "Apply for this job", "Apply to this position", "Start application", "I'm interested", "Apply for Position"]) {
@@ -17,7 +17,7 @@ test("apply button text", () => {
 
 // ── a tiny DOM for the in-page probe ────────────────────────────────────────
 
-function el(tag, { text = "", attrs = {}, visible = true, inside = [] } = {}) {
+function el(tag, { text = "", attrs = {}, visible = true, inside = [], form = null } = {}) {
   const node = {
     tagName: tag.toUpperCase(),
     innerText: text,
@@ -32,7 +32,7 @@ function el(tag, { text = "", attrs = {}, visible = true, inside = [] } = {}) {
     clicks: 0,
     getAttribute: (k) => (k in attrs ? attrs[k] : null),
     getBoundingClientRect: () => (node.visible ? { width: 100, height: 20 } : { width: 0, height: 0 }),
-    closest: (sel) => (inside.some((s) => sel.includes(s)) ? {} : null),
+    closest: (sel) => (sel === "form" ? form : inside.some((s) => sel.includes(s)) ? {} : null),
     scrollIntoView() {},
     click() {
       node.clicks += 1;
@@ -97,6 +97,68 @@ test("search boxes, header fields and hidden inputs do not make a form", () => {
     ],
   });
   assert.equal(probeApplyPage(RULES, false).ready, false);
+});
+
+function fakeForm({ id = "", className = "", text = "", inner = [], file = false } = {}) {
+  return {
+    id,
+    className,
+    innerText: text,
+    getAttribute: () => null,
+    querySelector: (sel) => (sel === "input[type=file]" && file ? {} : null),
+    querySelectorAll: () => inner.map((c) => ({ id: "", className: c })),
+  };
+}
+
+test("a job-alert signup beside the description is not the application", () => {
+  const alerts = fakeForm({ className: "form-template", inner: ["form-group form-template-field-job-alert"] });
+  const fields = ["first", "last", "email", "departments", "locations"].map((n) => el("input", { attrs: { name: n }, form: alerts }));
+  const apply = el("a", { text: "Apply now", attrs: { href: "https://boards.greenhouse.io/acme/jobs/1" } });
+  page({ fields, controls: [apply], href: "https://careers.acme.com/jobs/1" });
+  const out = probeApplyPage(RULES, true);
+  assert.equal(out.ready, false);
+  assert.equal(out.href, "https://boards.greenhouse.io/acme/jobs/1");
+});
+
+test("an application form with a resume upload is never taken for a signup", () => {
+  const form = fakeForm({ className: "form-template", text: "Apply. Join our talent community (optional)", file: true });
+  page({ fields: ["first", "last", "email"].map((n) => el("input", { attrs: { name: n }, form })) });
+  assert.equal(probeApplyPage(RULES, false).ready, true);
+});
+
+test("expired and removed postings are recognised; live ones are not", () => {
+  for (const t of ["Job not found", "This job can\u2019t be found", "Oops, you've gone too far!", "This job is no longer available", "Sorry, this position has been filled", "Page not found", "The job you are looking for is no longer open", "This posting has expired", "Applications are closed"]) {
+    assert.ok(isGoneText(t), t);
+  }
+  for (const t of ["Senior Software Engineer", "Apply for this job", "We are no longer a small startup", "Application deadline: Friday", ""]) {
+    assert.ok(!isGoneText(t), t);
+  }
+});
+
+test("job boards' dead-posting redirects report gone", () => {
+  for (const [pathname, search] of [["/gitlab", "?error=true"], ["/runware/", "?not_found=true"], ["/404", ""]]) {
+    page();
+    globalThis.location = { href: "https://x.test" + pathname + search, pathname, search };
+    assert.equal(probeApplyPage(RULES, false).gone, true, pathname + search);
+  }
+  page();
+  globalThis.location = { href: "https://jobs.lever.co/acme/1", pathname: "/acme/1", search: "?lever-source=error" };
+  assert.equal(probeApplyPage(RULES, false).gone, false);
+});
+
+test("a not-found page without a form reports gone", () => {
+  page({ href: "https://jobs.ashbyhq.com/runbook/x/application" });
+  globalThis.document.title = "Jobs";
+  const heading = el("h1", { text: "Job not found" });
+  globalThis.document.querySelectorAll = (sel) => (sel.startsWith("input:not") ? [] : sel.startsWith("h1") ? [heading] : []);
+  globalThis.document.body = { innerText: "Job not found The job you requested was not found. View all open positions" };
+  assert.equal(probeApplyPage(RULES, false).gone, true);
+});
+
+test("a form page is never gone even if it mentions closing dates", () => {
+  page({ fields: inputs(5) });
+  globalThis.document.title = "Applications closed on Friday? No, apply now";
+  assert.equal(probeApplyPage(RULES, false).gone, false);
 });
 
 test("an apply link is returned to load in the same tab", () => {
@@ -169,6 +231,22 @@ test("a page that is already a form is left as it is", async () => {
   assert.equal(out.ready, true);
   assert.deepEqual(out.steps, []);
   assert.deepEqual(calls, ["probe"]);
+});
+
+test("a single-page site whose Apply button renders late is still clicked through", async () => {
+  const calls = chromeWith([{ ready: false }, { ready: false }, { ready: false }, { ready: false, clicked: true, label: "apply now" }, { ready: true }, { ready: true }]);
+  const out = await reachApplicationForm(1, { waitMs: 3000 });
+  assert.equal(out.ready, true);
+  assert.deepEqual(out.steps, ["apply now"]);
+  assert.deepEqual(calls.slice(0, 4), ["probe", "act", "act", "act"]);
+});
+
+test("an expired posting is reported gone without clicking anything", async () => {
+  chromeWith([{ ready: false }, { ready: false, gone: true }]);
+  const out = await reachApplicationForm(1);
+  assert.equal(out.gone, true);
+  assert.equal(out.ready, false);
+  assert.deepEqual(out.steps, []);
 });
 
 test("no form and no apply button: not ready, nothing clicked", async () => {

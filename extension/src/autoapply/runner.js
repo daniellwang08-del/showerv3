@@ -8,7 +8,7 @@
 // mark applied. Anything it cannot finish is left open in its tab for the user.
 
 import * as api from "../api.js";
-import { reachApplicationForm } from "../applyForm.js";
+import { jobGone, reachApplicationForm } from "../applyForm.js";
 import * as storage from "../storage.js";
 import { detectPlatform, resolveEngine } from "../engines.js";
 import { docsComplete, jobFromSession } from "../panel/actions/job.js";
@@ -53,6 +53,7 @@ class Stop extends Error {
 
 const needsYou = (message, extra) => new Stop("needs_you", message, extra);
 const skipped = (message) => new Stop("skipped", message);
+const postingGone = () => new Stop("invalid", "The job posting is no longer available (expired, filled or removed).");
 
 // ── page helpers (content/auto-apply.js) ────────────────────────────────────
 
@@ -167,9 +168,15 @@ async function waitForFill() {
 async function fill(tab) {
   setState({ autofill: emptyAutofill() });
   const res = await startAutofill({ tab, headless: true });
-  if (!res || !res.ok) throw needsYou((res && res.error) || "Autofill could not start on this page.");
+  if (!res || !res.ok) {
+    if (await jobGone(tab.id, 0)) throw postingGone();
+    throw needsYou((res && res.error) || "Autofill could not start on this page.");
+  }
   const af = await waitForFill();
-  if (af.error) throw needsYou(af.error);
+  if (af.error) {
+    if (await jobGone(tab.id, 0)) throw postingGone();
+    throw needsYou(af.error);
+  }
   const needs = (af.needsUser || []).map((n) => `${n.label}: ${n.reason}`);
   return { filled: (af.specs || []).length, needs, submitted: af.submitted === true };
 }
@@ -335,9 +342,12 @@ async function run(cfg) {
     });
     if (!reached.tab) throw new Stop("failed", "The application tab was closed.");
     tab = reached.tab;
+    if (reached.gone) throw postingGone();
     if (!reached.ready && reached.steps.length) {
       throw needsYou(`Clicked "${reached.steps[reached.steps.length - 1]}" but no application form opened. Open it on the page.`);
     }
+  } else if (await jobGone(tab.id)) {
+    throw postingGone();
   }
   platform = detectPlatform({ pageUrl: tab.url });
   report({ platform });

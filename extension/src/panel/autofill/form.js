@@ -92,6 +92,7 @@ export async function startAutofill({ tab: targetTab = null, headless = false, r
       if (!headless) toast("Opening the application form…");
       const hop = await reachApplicationForm(tab.id, { waitMs: headless ? 25_000 : 15_000, focus: focusGate() });
       if (!hop.tab) return fail("The application tab was closed.");
+      if (hop.gone) return fail("This job posting is no longer available (expired, filled or removed).");
       if (!hop.ready && hop.steps.length) return fail(`Clicked "${hop.steps[hop.steps.length - 1]}" but no application form opened.`);
       if (hop.steps.length && hostOf(hop.tab.url) !== hostOf(tab.url)) {
         return startAutofill({ tab: hop.tab, headless, reached: true });

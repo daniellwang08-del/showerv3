@@ -47,7 +47,17 @@ test("apply-later and failed jobs are retryable, later does not count as an atte
     b: { status: "applied", at: NOW - 1000 },
     c: { status: "invalid", at: NOW - 1000 },
   };
-  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 2, applied: 1, rate: 50 });
+  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 1, applied: 1, filled: 0, rate: 100 });
+});
+
+test("a dry run's filled forms count as successes", () => {
+  const history = {
+    a: { status: "filled", at: NOW - 1000 },
+    b: { status: "filled", at: NOW - 1000 },
+    c: { status: "needs_you", at: NOW - 1000 },
+    d: { status: "applied", at: NOW - 1000 },
+  };
+  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 4, applied: 1, filled: 2, rate: 75 });
 });
 
 test("nextRunnable respects the per-company daily cap", () => {
@@ -76,8 +86,8 @@ test("history helpers count today, success rate and filters", () => {
     d: { status: "applied", at: NOW - 3 * 86400_000 },
   };
   assert.equal(appliedToday(history, NOW), 1);
-  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 3, applied: 2, rate: 67 });
-  assert.deepEqual(successStats({}, { now: NOW }), { attempts: 0, applied: 0, rate: null });
+  assert.deepEqual(successStats(history, { now: NOW }), { attempts: 3, applied: 2, filled: 0, rate: 67 });
+  assert.deepEqual(successStats({}, { now: NOW }), { attempts: 0, applied: 0, filled: 0, rate: null });
   const entries = Object.entries(history);
   assert.deepEqual(filterHistory(entries, { status: "applied" }).map(([id]) => id), ["a", "d"]);
   assert.deepEqual(filterHistory(entries, { q: "no form" }).map(([id]) => id), ["b"]);
