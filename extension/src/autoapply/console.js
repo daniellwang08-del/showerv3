@@ -12,7 +12,9 @@ import {
   ORDERS,
   STAGES,
   appliedToday,
+  CLOSED_UNSUBMITTED,
   RETRYABLE,
+  closedWithoutSubmit,
   arrangeQueue,
   easeLabel,
   easeTier,
@@ -307,7 +309,7 @@ async function rememberHandOff(tabId, jobId) {
     .catch(() => {});
 }
 
-const OUTCOME_TONE = { applied: "ok", filled: "info", needs_you: "warn", skipped: "muted", failed: "danger" };
+const OUTCOME_TONE = { applied: "ok", filled: "info", needs_you: "warn", skipped: "muted", failed: "danger", later: "info" };
 
 async function finishRun(jobId, outcome) {
   const run = store.runs[jobId];
@@ -320,8 +322,14 @@ async function finishRun(jobId, outcome) {
   otpWaiting.delete(jobId);
 
   const tabId = outcome.tabId != null ? outcome.tabId : run.tabId;
-  const status = outcome.status || "failed";
-  let tabOpen = tabId != null;
+  let status = outcome.status || "failed";
+  const tabGone = tabId != null && !(await chrome.tabs.get(tabId).catch(() => null));
+  // The user closed the run's tab mid-way: same as closing a hand-off tab.
+  if (tabGone && closedWithoutSubmit({ status })) {
+    status = "later";
+    outcome = { ...outcome, message: CLOSED_UNSUBMITTED };
+  }
+  let tabOpen = tabId != null && !tabGone;
   if (status === "applied" && tabId != null && store.settings.closeOnSuccess) {
     await chrome.tabs.remove(tabId).catch(() => {});
     tabOpen = false;
@@ -352,6 +360,7 @@ async function finishRun(jobId, outcome) {
   log(OUTCOME_TONE[status] || "muted", `${STATUS[status] ? STATUS[status].label : status}: ${run.title}. ${entry.message}`.trim());
   await saveHistory({ ...store.history, [jobId]: entry });
   if (store.phase === "paused" && !Object.keys(store.runs).length) notify("info", "Paused. Running applications have finished.");
+  if (status === "later") await loadQueue();
   pump();
 }
 
@@ -469,14 +478,16 @@ function entryFor(jobId) {
 /** Close the jobs' tabs and queue them again after every job not set aside. */
 async function applyLater(jobIds) {
   const history = { ...store.history };
+  const tabs = [];
   for (const id of jobIds) {
     const h = entryFor(id);
     if (!h) continue;
-    if (h.tabOpen && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
+    if (h.tabOpen && h.tabId != null) tabs.push(h.tabId);
     history[id] = { ...h, status: "later", message: "Set aside to try again after the rest of the queue.", at: Date.now(), tabOpen: false };
   }
   set((s) => ({ pinned: s.pinned.filter((p) => !jobIds.includes(p)), skipped: s.skipped.filter((p) => !jobIds.includes(p)), modal: null }));
   await saveHistory(history);
+  for (const tabId of tabs) await chrome.tabs.remove(tabId).catch(() => {});
   log("info", jobIds.length === 1 ? `Apply later: ${history[jobIds[0]]?.title || "job"}.` : `${jobIds.length} jobs moved to apply later.`);
   await loadQueue();
   if (store.phase === "running") pump();
@@ -493,15 +504,16 @@ async function markInvalid(jobId) {
     notify("danger", (err && err.message) || "Could not mark the job invalid.");
     return;
   }
-  if (h.tabOpen && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
   set((s) => ({
     available: s.available.filter((q) => q.id !== jobId),
     pinned: s.pinned.filter((p) => p !== jobId),
   }));
+  // Saved before the tab closes, or the close would move it to apply later.
   await saveHistory({
     ...store.history,
     [jobId]: { ...h, status: "invalid", message: "Marked invalid. Hidden from your job lists.", at: Date.now(), tabOpen: false },
   });
+  if (h.tabOpen && h.tabId != null) await chrome.tabs.remove(h.tabId).catch(() => {});
   log("muted", `Marked invalid: ${h.title || "job"}.`);
   if (store.phase === "running") pump();
   resumeIfUnblocked();
@@ -541,19 +553,26 @@ function setLive(live) {
   });
 }
 
+// Entries waiting on the user are the background's: it moves them to apply
+// later when their tab closes. Any other entry only needs its flag cleared.
 chrome.tabs.onRemoved.addListener((tabId) => {
-  const hit = Object.entries(store.history).find(([, h]) => h.tabId === tabId && h.tabOpen);
+  const hit = Object.entries(store.history).find(([, h]) => h.tabId === tabId && h.tabOpen && !closedWithoutSubmit(h));
   if (hit) void saveHistory({ ...store.history, [hit[0]]: { ...hit[1], tabOpen: false } }).then(resumeIfUnblocked);
 });
 
-// The user submitted a handed-off tab: the background marked it applied and
-// rewrote the history.
+// The background rewrote the history: the user submitted a handed-off tab, or
+// closed one without submitting.
 chrome.storage.local.onChanged.addListener((changes) => {
   const next = changes[HISTORY_KEY] && changes[HISTORY_KEY].newValue;
-  if (next) {
-    set({ history: next });
-    resumeIfUnblocked();
+  if (!next) return;
+  const before = laterIds(store.history);
+  set({ history: next });
+  if ([...laterIds(next)].some((id) => !before.has(id))) {
+    void loadQueue().then(() => {
+      if (store.phase === "running") pump();
+    });
   }
+  resumeIfUnblocked();
 });
 
 // ── UI ──────────────────────────────────────────────────────────────────────

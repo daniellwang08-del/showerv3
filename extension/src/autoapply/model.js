@@ -108,6 +108,19 @@ export function isWaiting(h) {
   return h.status === "needs_you" || h.status === "filled" || (h.status === "failed" && h.tabOpen);
 }
 
+const LEFT_FOR_USER = new Set(["needs_you", "filled", "failed"]);
+export const CLOSED_UNSUBMITTED = "You closed the tab without submitting, so it moved to apply later.";
+
+/**
+ * The user closed a tab auto-apply left for them without submitting: they
+ * want to come back to it, so it joins the end of the queue as "apply later".
+ * Null when the entry is not one waiting on them.
+ */
+export function closedWithoutSubmit(entry, now = Date.now()) {
+  if (!entry || !LEFT_FOR_USER.has(entry.status)) return null;
+  return { ...entry, status: "later", message: CLOSED_UNSUBMITTED, at: now, tabOpen: false };
+}
+
 /** Finished attempts in the last `days`: how many and how many were submitted. */
 export function successStats(history, { days = 7, now = Date.now() } = {}) {
   const since = now - days * 24 * 60 * 60 * 1000;

@@ -6,6 +6,7 @@ import { isDashboardUrl } from "./src/backendOrigin.js";
 import { attachMessageHandlers as attachJobSiteConnectHandlers } from "./src/jobSiteConnect.js";
 import { attachBrowserSync } from "./src/jobSiteBrowserSync.js";
 import * as api from "./src/api.js";
+import { closedWithoutSubmit } from "./src/autoapply/model.js";
 
 const BRIDGE_FILE = "content/webapp-bridge.js";
 
@@ -571,8 +572,22 @@ async function handleAppSubmitted(msg, sender) {
   }
 }
 
+// A hand-off tab closed while still registered was never submitted (a submit
+// unregisters it first), so the job moves to apply later.
+async function laterOnHandOffClose(tabId) {
+  const entry = await handOffEntry(tabId);
+  await chrome.storage.session.remove([AA_TAB_PREFIX + tabId, AA_HANDOFF_PREFIX + tabId]).catch(() => {});
+  if (!entry || !entry.jobId) return;
+  const jobId = String(entry.jobId);
+  const { [AA_HISTORY_KEY]: history } = await chrome.storage.local.get(AA_HISTORY_KEY);
+  const current = history && history[jobId];
+  if (!current || (current.tabId != null && current.tabId !== tabId)) return;
+  const next = closedWithoutSubmit(current);
+  if (next) await chrome.storage.local.set({ [AA_HISTORY_KEY]: { ...history, [jobId]: next } });
+}
+
 chrome.tabs.onRemoved.addListener((tabId) => {
-  chrome.storage.session.remove([AA_TAB_PREFIX + tabId, AA_HANDOFF_PREFIX + tabId]).catch(() => {});
+  laterOnHandOffClose(tabId).catch((err) => console.warn("auto-apply tab close handling failed", err));
   chrome.storage.session
     .get("applyTabJobs")
     .then(({ applyTabJobs }) => {

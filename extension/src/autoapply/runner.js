@@ -2,12 +2,13 @@
 // per job, so every run gets its own copy of the panel state and autofill
 // modules: parallel runs cannot see each other's fields or messages.
 //
-// Flow: open the job in a background tab -> fill it with the platform engine ->
-// check the page -> submit (unless dry run) -> answer an emailed code when the
-// ATS asks for one -> confirm -> mark applied. Anything it cannot finish is
-// left open in its tab for the user.
+// Flow: open the job in a background tab -> click through "Apply" until a form
+// shows -> fill it with the platform engine -> check the page -> submit (unless
+// dry run) -> answer an emailed code when the ATS asks for one -> confirm ->
+// mark applied. Anything it cannot finish is left open in its tab for the user.
 
 import * as api from "../api.js";
+import { reachApplicationForm } from "../applyForm.js";
 import * as storage from "../storage.js";
 import { detectPlatform, resolveEngine } from "../engines.js";
 import { docsComplete, jobFromSession } from "../panel/actions/job.js";
@@ -319,6 +320,25 @@ async function run(cfg) {
   let platform = detectPlatform({ pageUrl: tab.url });
   const better = applyPageUrl(platform, tab.url || "");
   if (better && better !== tab.url) tab = await navigate(tab.id, better);
+  if (AGGREGATOR_HOSTS.some((h) => hostOf(tab.url).endsWith(h))) {
+    throw needsYou("This is a job board listing. Open the employer's application from it.");
+  }
+
+  // Description pages hide the form behind "Apply"; fill only once it shows.
+  // JobDiva opens its own Quick Apply during the fill.
+  platform = detectPlatform({ pageUrl: tab.url });
+  if (platform !== "jobdiva" && !NEEDS_ACCOUNT.has(platform)) {
+    const reached = await reachApplicationForm(tab.id, {
+      onStep: step,
+      waitMs: 25_000,
+      focus: (id) => (console_ ? console_.focusTab(id) : null),
+    });
+    if (!reached.tab) throw new Stop("failed", "The application tab was closed.");
+    tab = reached.tab;
+    if (!reached.ready && reached.steps.length) {
+      throw needsYou(`Clicked "${reached.steps[reached.steps.length - 1]}" but no application form opened. Open it on the page.`);
+    }
+  }
   platform = detectPlatform({ pageUrl: tab.url });
   report({ platform });
   if (AGGREGATOR_HOSTS.some((h) => hostOf(tab.url).endsWith(h))) {

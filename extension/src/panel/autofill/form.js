@@ -3,6 +3,8 @@
 // and walk multi-page flows (Lever, Workable, SmartRecruiters, iCIMS, ...).
 
 import * as api from "../../api.js";
+import { reachApplicationForm } from "../../applyForm.js";
+import { hostOf } from "../../autoapply/platforms.js";
 import { autofillPermissionOrigins, resolveEngine } from "../../engines.js";
 import * as storage from "../../storage.js";
 import * as tabMsg from "../../tab-messaging.js";
@@ -51,7 +53,7 @@ let writePassSeq = 0;
  * background tab it owns) and `headless`: host access was granted up front, so
  * no permission prompt, and failures come back as `{ ok: false, error }`.
  */
-export async function startAutofill({ tab: targetTab = null, headless = false } = {}) {
+export async function startAutofill({ tab: targetTab = null, headless = false, reached = false } = {}) {
   const fail = (message) => {
     if (!headless) toast(message);
     return { ok: false, error: message };
@@ -83,6 +85,16 @@ export async function startAutofill({ tab: targetTab = null, headless = false } 
       : await chrome.permissions.request({ origins: permOrigins });
     if (!granted) {
       return fail(headless ? "NAO does not have access to this site. Start auto-apply again to allow it." : "Permission to read this page was denied.");
+    }
+    // A description page: open the application first (JobDiva does its own).
+    if (engine.mode !== "workday" && engine.platform !== "jobdiva" && !reached) {
+      if (!headless) toast("Opening the application form…");
+      const hop = await reachApplicationForm(tab.id, { waitMs: headless ? 25_000 : 15_000, focus: focusGate() });
+      if (!hop.tab) return fail("The application tab was closed.");
+      if (!hop.ready && hop.steps.length) return fail(`Clicked "${hop.steps[hop.steps.length - 1]}" but no application form opened.`);
+      if (hop.steps.length && hostOf(hop.tab.url) !== hostOf(tab.url)) {
+        return startAutofill({ tab: hop.tab, headless, reached: true });
+      }
     }
     const res = await chrome.runtime.sendMessage({ type: "AUTOFILL_INJECT", tabId: tab.id, engine: engine.scripts });
     if (!res || !res.ok) {
