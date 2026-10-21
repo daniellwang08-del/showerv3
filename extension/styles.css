@@ -2574,3 +2574,153 @@ button.quick-collapsed:hover {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── report an issue ────────────────────────────────────────────────────── */
+
+.select-block {
+  display: flex;
+  width: 100%;
+}
+
+.select-block select {
+  width: 100%;
+  height: 34px;
+  font-size: 13px;
+}
+
+.report-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--background) 60%, var(--card));
+  color: var(--muted-foreground);
+  text-align: center;
+  transition: border-color 120ms, background 120ms;
+}
+
+.report-drop.is-over {
+  border-color: var(--brand);
+  background: color-mix(in oklch, var(--brand) 10%, var(--card));
+}
+
+.report-drop-copy {
+  margin: 0;
+  font-size: 12px;
+}
+
+.report-drop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+
+.report-files {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.report-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
+}
+
+.report-thumb {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+}
+
+.report-thumb img {
+  display: block;
+  width: 100%;
+  height: 72px;
+  object-fit: cover;
+}
+
+.report-thumb figcaption {
+  padding: 2px 6px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.report-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--background) 80%, transparent);
+}
+
+.report-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+}
+
+.report-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-page {
+  align-items: flex-start;
+}
+
+.report-page-host {
+  display: inline-block;
+  max-width: 180px;
+  margin-left: 4px;
+  overflow: hidden;
+  vertical-align: bottom;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.report-sent {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px 12px;
+  align-items: start;
+}
+
+.report-sent > .btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.report-sent-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.report-sent-title {
+  margin: 0 0 2px;
+  font-weight: 600;
+}
+
+.report-sent .small {
+  margin: 0;
+}

@@ -35,13 +35,32 @@ export function emptyQuickApply() {
   return { open: false, description: "", title: "", company: "", url: "", details: false, busy: false, reading: false, error: null };
 }
 
+export function emptyReport() {
+  return {
+    category: "bug",
+    title: "",
+    description: "",
+    includePage: true,
+    files: [],
+    sending: false,
+    error: null,
+    sent: null,
+    page: null,
+    origin: null,
+    options: null,
+    mine: null,
+    mineLoading: false,
+    capturing: false,
+  };
+}
+
 export function emptyList() {
   return { items: [], total: 0, page: 1, pages: 1, loading: false, error: null, key: null, loadedAt: 0 };
 }
 
 function initialState() {
   return {
-    // loading | login | home | list | job | tailor | stats | settings | progress
+    // loading | login | home | list | job | tailor | stats | settings | progress | report
     view: "loading",
     listId: null,
     user: null,
@@ -79,6 +98,7 @@ function initialState() {
     stats: { period: "week", progress: null, scraper: null, loading: false },
     addJobs: null,
     quickApply: emptyQuickApply(),
+    report: emptyReport(),
 
     toast: null,
     modal: null,

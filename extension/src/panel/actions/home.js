@@ -9,16 +9,19 @@ import { openFromList, stopStreaming } from "./job.js";
 
 let homeRequest = 0;
 
+/** A job is open on screen, or kept alive under the issue report form. */
+const inJob = () => state.view === "job" || (state.view === "report" && !!state.job);
+
 /** Leave any job and show Home. */
 export async function goHome() {
-  if (state.view === "job") await leaveJob();
+  if (inJob()) await leaveJob();
   setState({ view: "home", listId: null, jobError: null });
   await loadHome();
 }
 
 /** Switch to another top-level view, leaving any open job cleanly. */
 export async function showView(view) {
-  if (state.view === "job") await leaveJob();
+  if (inJob()) await leaveJob();
   setState({ view });
   if (view === "list") void loadList(state.list.page || 1, { quiet: true });
 }
@@ -47,7 +50,7 @@ export async function loadHome({ quiet = false } = {}) {
 
 /** Open a list from Home with its default filters. */
 export async function openList(listId) {
-  if (state.view === "job") await leaveJob();
+  if (inJob()) await leaveJob();
   const def = LISTS[listId] || LISTS.all;
   setState({
     view: "list",

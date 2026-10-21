@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Briefcase,
+  Bug,
   CalendarClock,
   Cpu,
   Database,
@@ -81,6 +82,12 @@ export const adminNav: NavSection[] = [
         label: 'Packages',
         icon: PackageOpen,
         keywords: ['credits', 'grant', 'gift', 'team plan', 'store', 'billing'],
+      },
+      {
+        to: '/admin/issues',
+        label: 'Reported issues',
+        icon: Bug,
+        keywords: ['bugs', 'feedback', 'support', 'problems', 'screenshots', 'reports'],
       },
       {
         to: '/admin/shared',

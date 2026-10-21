@@ -1,5 +1,6 @@
 import { html } from "../../lib/preact.js";
 import { goHome, showView } from "../actions/home.js";
+import { openReport } from "../actions/report.js";
 import { LISTS } from "../lists.js";
 import { setState, useAppState } from "../state.js";
 import { dismissToast } from "../toast.js";
@@ -9,6 +10,7 @@ import { InProgressView } from "./views/InProgress.js";
 import { JobView } from "./views/Job.js";
 import { ListView } from "./views/List.js";
 import { LoginView } from "./views/Login.js";
+import { ReportView } from "./views/Report.js";
 import { SettingsView } from "./views/Settings.js";
 import { StatsView } from "./views/Stats.js";
 import { TailorView } from "./views/Tailor.js";
@@ -18,6 +20,7 @@ const TITLES = {
   stats: "Activity",
   settings: "Settings",
   progress: "In progress",
+  report: "Report an issue",
 };
 
 const navigate = (view) => void showView(view);
@@ -38,6 +41,10 @@ function TopBar({ s }) {
     if (ctx && ctx.listId && LISTS[ctx.listId]) back = () => navigate("list");
     else if (ctx && ctx.listId === "progress") back = () => navigate("progress");
   }
+  if (s.view === "report" && s.report.origin) {
+    if (s.report.origin.view === "settings") back = () => navigate("settings");
+    else if (s.report.origin.view === "job" && s.job) back = () => setState({ view: "job" });
+  }
   return html`<header class="topbar">
     ${onHome
       ? html`<span class="brand"><img src="icons/icon32.png" alt="" width="20" height="20" /><span>NAO</span></span>`
@@ -49,9 +56,12 @@ function TopBar({ s }) {
       ? html`
           <${IconButton} icon="sparkles" label="Tailor a resume" onClick=${() => navigate("tailor")} />
           <${IconButton} icon="chart" label="Activity" onClick=${() => navigate("stats")} />
+          <${IconButton} icon="bug" label="Report an issue" onClick=${() => openReport(showView)} />
           <${IconButton} icon="settings" label="Settings" onClick=${() => navigate("settings")} />
         `
-      : null}
+      : s.view === "job"
+        ? html`<${IconButton} icon="bug" label="Report an issue with this job" onClick=${() => openReport(showView)} />`
+        : null}
   </header>`;
 }
 
@@ -71,6 +81,8 @@ function Body({ s }) {
       return html`<${StatsView} s=${s} />`;
     case "settings":
       return html`<${SettingsView} s=${s} />`;
+    case "report":
+      return html`<${ReportView} s=${s} />`;
     default:
       return html`<div class="center-fill"><${Spinner} size=${22} /></div>`;
   }

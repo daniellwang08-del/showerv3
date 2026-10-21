@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Text, Date, DateTime, Float, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, String, Text, Date, DateTime, Float, Identity, Integer, Enum as SQLEnum, Index, JSON, Boolean, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import declarative_base, deferred, validates
 from sqlalchemy.sql import func
 from app.models.schemas import ExtractionMethod, ExtractionStatus
@@ -1280,6 +1280,50 @@ class TeamInvite(Base):
     status = Column(String(16), nullable=False, server_default="pending")
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     responded_at = Column(DateTime, nullable=True)
+
+
+class IssueReport(Base):
+    """A problem a user reported (from the extension), triaged on the admin Reported issues page."""
+    __tablename__ = "issue_reports"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Short reference shown to people ("#42").
+    number = Column(Integer, Identity(), nullable=False, unique=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # bug | autofill | jobs | resume | account | other
+    category = Column(String(24), nullable=False, server_default="bug")
+    title = Column(String(160), nullable=False)
+    description = Column(Text, nullable=False)
+    # open | in_progress | resolved | closed
+    status = Column(String(16), nullable=False, server_default="open")
+    source = Column(String(16), nullable=False, server_default="extension")
+    page_url = Column(String(2048), nullable=True)
+    page_title = Column(String(300), nullable=True)
+    # Extension version, browser, panel view, job in view.
+    context = Column(JSON, nullable=True)
+    admin_note = Column(Text, nullable=True)
+    status_changed_at = Column(DateTime, nullable=True)
+    status_changed_by_user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_issue_reports_status_created", "status", "created_at"),)
+
+
+class IssueReportAttachment(Base):
+    """A screenshot or file attached to an issue report. Bytes are deferred so lists stay light."""
+    __tablename__ = "issue_report_attachments"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    report_id = Column(String(36), ForeignKey("issue_reports.id", ondelete="CASCADE"), nullable=False, index=True)
+    # image | file
+    kind = Column(String(8), nullable=False)
+    filename = Column(String(255), nullable=False)
+    content_type = Column(String(120), nullable=False)
+    byte_size = Column(Integer, nullable=False)
+    position = Column(Integer, nullable=False, server_default="0")
+    data = deferred(Column(LargeBinary, nullable=False))
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
 
 
 class SystemSetting(Base):

@@ -73,9 +73,9 @@ async function hostLabel() {
 /**
  * Low-level fetch with auth, timeout and uniform errors. Returns the Response.
  * @param {string} path API path below /api/v1
- * @param {{ method?: string, body?: any, auth?: boolean, timeoutMs?: number, signal?: AbortSignal, accept?: string }} [opts]
+ * @param {{ method?: string, body?: any, form?: FormData, auth?: boolean, timeoutMs?: number, signal?: AbortSignal, accept?: string }} [opts]
  */
-async function send(path, { method = "GET", body, auth = true, timeoutMs = DEFAULT_TIMEOUT_MS, signal, accept } = {}) {
+async function send(path, { method = "GET", body, form, auth = true, timeoutMs = DEFAULT_TIMEOUT_MS, signal, accept } = {}) {
   const base = await getBackendUrl();
   const headers = {};
   if (accept) headers.Accept = accept;
@@ -84,7 +84,9 @@ async function send(path, { method = "GET", body, auth = true, timeoutMs = DEFAU
     if (token) headers.Authorization = `Bearer ${token}`;
   }
   let payload;
-  if (body !== undefined) {
+  if (form !== undefined) {
+    payload = form;
+  } else if (body !== undefined) {
     headers["Content-Type"] = "application/json";
     payload = JSON.stringify(body);
   }
@@ -361,6 +363,23 @@ export const activateResume = (resumeId) =>
   apiFetch(`/resume-builder/resumes/${encodeURIComponent(resumeId)}/activate`, { method: "POST" });
 export const triggerResumeBuild = (jobId) =>
   apiFetch(`/jobs/valid/${encodeURIComponent(jobId)}/resume-build/trigger`, { method: "POST" });
+
+// ── issue reports ────────────────────────────────────────────────────────────
+
+export const getIssueOptions = () => apiFetch("/issues/options");
+export const listMyIssues = (limit = 20) => apiFetch(`/issues${qs({ limit })}`);
+
+/**
+ * @param {{ title?: string, description: string, category: string, page_url?: string, page_title?: string,
+ *   context?: object, files?: File[] }} report
+ */
+export function submitIssue({ files = [], context, ...fields }) {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) if (v != null && v !== "") form.append(k, String(v));
+  if (context) form.append("context", JSON.stringify(context));
+  for (const f of files) form.append("files", f, f.name);
+  return apiFetch("/issues", { method: "POST", form, timeoutMs: 120_000 });
+}
 
 // ── streaming (SSE over fetch so the Authorization header can be sent) ───────
 

@@ -1,6 +1,8 @@
 import { html, useEffect, useLayoutEffect, useState } from "../../../lib/preact.js";
 import * as storage from "../../../storage.js";
 import { changeServer, refreshAccount, savePreference, signOut, updateAccountSetting } from "../../actions/session.js";
+import { showView } from "../../actions/home.js";
+import { openReport } from "../../actions/report.js";
 import { openMatchingPreferences } from "../../actions/tailor.js";
 import { setState } from "../../state.js";
 import { toast } from "../../toast.js";
@@ -271,6 +273,14 @@ export function SettingsView({ s }) {
 
     <${Section} title="Server">
       <div class="card"><${Server} backendUrl=${s.backendUrl} /></div>
+    </${Section}>
+
+    <${Section} title="Help">
+      <div class="card">
+        <${Row} label="Report an issue" hint="Describe a problem and attach screenshots or files. The NAO team reviews every report.">
+          <${Button} size="sm" variant="secondary" icon="bug" onClick=${() => openReport(showView)}>Report</${Button}>
+        </${Row}>
+      </div>
     </${Section}>
 
     <p class="muted small center">NAO ${chrome.runtime.getManifest().version}</p>
