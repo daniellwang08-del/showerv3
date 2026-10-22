@@ -32,8 +32,6 @@ from app.models.auth_schemas import (
     AuthResponse,
     LoginRequest,
     ProfileUpdateRequest,
-    RedeemAccessKeyRequest,
-    SignupApprovalState,
     SignupRequest,
     UserResponse,
 )
@@ -268,11 +266,12 @@ def _auth_cookie_params(*, max_age: int | None = None) -> dict:
     return params
 
 
-async def _authenticate(request: Request, *, allow_pending: bool) -> dict:
+async def get_current_user(request: Request):
+    """Signed-in, active account that is not blocked. Every protected route depends on this."""
     from app.services.session_auth import AUTH_STATUS_HEADER, SessionAuthError, resolve_session
 
     try:
-        resolved = await resolve_session(_request_access_token(request), allow_pending=allow_pending)
+        resolved = await resolve_session(_request_access_token(request))
     except SessionAuthError as e:
         logger.warning("auth_required_rejected", reason=e.reason)
         headers = {AUTH_STATUS_HEADER: e.auth_status} if e.auth_status else None
@@ -291,16 +290,6 @@ async def _authenticate(request: Request, *, allow_pending: bool) -> dict:
         "is_active": True,
         "approval_status": user.approval_status,
     }
-
-
-async def get_current_user(request: Request):
-    """Signed-in, active, approved account. Every protected route depends on this."""
-    return await _authenticate(request, allow_pending=False)
-
-
-async def get_pending_or_approved_user(request: Request):
-    """Like get_current_user but also admits pending signups. Only for /auth/approval*."""
-    return await _authenticate(request, allow_pending=True)
 
 
 async def require_admin(current_user: dict = Depends(get_current_user)) -> dict:
@@ -322,12 +311,16 @@ async def require_applicant(current_user: dict = Depends(get_current_user)) -> d
 
 @router.post("/auth/signup", response_model=AuthResponse)
 async def signup(request: SignupRequest, response: Response, http_request: Request) -> AuthResponse:
-    """Register a new user with email and password"""
+    """Open signup: the account is ready at once and starts with the welcome credits."""
     normalized_email = request.email.lower().strip()
 
     from app.api.rate_limit import enforce_auth_rate_limit
 
-    await enforce_auth_rate_limit(http_request, scope="signup", email=normalized_email)
+    # Every account gets free credits, so new accounts per IP are capped much
+    # tighter than login attempts.
+    await enforce_auth_rate_limit(
+        http_request, scope="signup", email=normalized_email, per_ip=10, per_ip_window=3600
+    )
 
     async with get_session() as session:
         user_repo = UserRepository(session)
@@ -360,13 +353,14 @@ async def signup(request: SignupRequest, response: Response, http_request: Reque
                 approval_status=user.approval_status,
             )
 
-            pending = user.approval_status == "pending"
+            from app.services.store_service import SIGNUP_CREDITS
+
             return AuthResponse(
                 success=True,
                 message=(
-                    "Signup request sent. An admin will approve it, or enter the access key you were given."
-                    if pending
-                    else "Account created successfully"
+                    "Account created successfully"
+                    if user.is_admin
+                    else f"Account created. You have {SIGNUP_CREDITS} free credits to start."
                 ),
                 email=user.email,
                 user_id=user.id,
@@ -424,24 +418,15 @@ async def login(request: LoginRequest, response: Response, http_request: Request
                 detail="Invalid email or password",
             )
 
-        from app.services.session_auth import AUTH_STATUS_HEADER, PENDING_DETAIL, REJECTED_DETAIL
+        from app.services.session_auth import AUTH_STATUS_HEADER, REJECTED_DETAIL
+        from app.services.signup_approval_service import APPROVAL_REJECTED, is_blocked
 
-        approval = user.approval_status or "approved"
-        if approval == "rejected":
+        if is_blocked(user):
             logger.warning("user_login_failed", email=normalized_email, reason="approval_rejected")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=REJECTED_DETAIL,
-                headers={AUTH_STATUS_HEADER: approval},
-            )
-        # The extension only works for approved accounts; a pending web login
-        # gets a session that can reach nothing but the approval screen.
-        if approval == "pending" and request.long_lived:
-            logger.warning("user_login_failed", email=normalized_email, reason="approval_pending_extension")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"{PENDING_DETAIL} Sign in on the website to check your request.",
-                headers={AUTH_STATUS_HEADER: approval},
+                headers={AUTH_STATUS_HEADER: APPROVAL_REJECTED},
             )
 
         # Long-lived token for non-cookie clients (extension); default 24h otherwise.
@@ -479,7 +464,7 @@ async def login(request: LoginRequest, response: Response, http_request: Request
             access_token=access_token,
             token_type="bearer",
             expires_in=expires_seconds,
-            approval_status=approval,
+            approval_status=user.approval_status,
         )
 
 
@@ -503,7 +488,9 @@ async def issue_extension_token(
     user_id = current_user.get("user_id")
     async with get_session() as session:
         user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-        if user is None or not user.is_active or user.approval_status != "approved":
+        from app.services.signup_approval_service import can_use_app
+
+        if not can_use_app(user):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         from app.services.system_settings_service import get_effective_value
 
@@ -579,66 +566,6 @@ async def read_users_me(current_user: dict = Depends(get_current_user)) -> UserR
             approved_at=user.approved_at,
             credit_balance=int(getattr(user, "credit_balance", 0) or 0),
         )
-
-
-async def _approval_state(user_id: str) -> SignupApprovalState:
-    async with get_session() as session:
-        user = await UserRepository(session).get_by_id(user_id)
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        return SignupApprovalState(
-            email=user.email,
-            approval_status=user.approval_status,
-            requested_at=user.created_at,
-        )
-
-
-@router.get("/auth/approval", response_model=SignupApprovalState)
-async def read_signup_approval(
-    current_user: dict = Depends(get_pending_or_approved_user),
-) -> SignupApprovalState:
-    """Polled by the waiting screen; flips to "approved" once an admin approves."""
-    return await _approval_state(current_user["user_id"])
-
-
-@router.post("/auth/approval/redeem", response_model=SignupApprovalState)
-async def redeem_signup_access_key(
-    body: RedeemAccessKeyRequest,
-    http_request: Request,
-    current_user: dict = Depends(get_pending_or_approved_user),
-) -> SignupApprovalState:
-    """Approve the caller's own pending signup with an admin-issued access key."""
-    from app.api.rate_limit import enforce_auth_rate_limit
-    from app.services.signup_approval_service import redeem_access_key
-
-    user_id = current_user["user_id"]
-    await enforce_auth_rate_limit(
-        http_request,
-        scope="access_key",
-        email=user_id,
-        per_ip=20,
-        per_ip_window=900,
-        per_identity=6,
-        per_identity_window=900,
-    )
-    async with get_session() as session:
-        user = (
-            await session.execute(select(User).where(User.id == user_id).with_for_update())
-        ).scalar_one_or_none()
-        if user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        if user.approval_status == "approved":
-            return SignupApprovalState(
-                email=user.email, approval_status=user.approval_status, requested_at=user.created_at
-            )
-        if not await redeem_access_key(session, user, body.key):
-            logger.warning("signup_access_key_rejected", user_id=user_id)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="That access key is invalid or has expired. Ask your admin for a new one.",
-            )
-        await session.commit()
-    return await _approval_state(user_id)
 
 
 @router.patch("/auth/profile", response_model=UserResponse)

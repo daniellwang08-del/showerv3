@@ -88,30 +88,12 @@ function SheetBody({
       </SheetHeader>
 
       <div className="scrollbar-thin min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain p-4">
-        {user.approval_status && user.approval_status !== 'approved' && (
+        {user.approval_status === 'rejected' && (
           <>
-            <Section
-              title="Signup approval"
-              description={
-                user.approval_status === 'pending'
-                  ? 'This account is waiting for approval and cannot use NAO or the extension yet.'
-                  : 'This signup was rejected. The user cannot sign in until it is approved.'
-              }
-            >
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => onAction({ kind: 'approval', user, next: 'approved' })}>
-                  <UserCheck /> Approve
-                </Button>
-                {user.approval_status === 'pending' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onAction({ kind: 'approval', user, next: 'rejected' })}
-                  >
-                    <UserX /> Reject
-                  </Button>
-                )}
-              </div>
+            <Section title="Blocked" description="This account cannot sign in or use the extension until it is unblocked.">
+              <Button size="sm" onClick={() => onAction({ kind: 'approval', user, next: 'approved' })}>
+                <UserCheck /> Unblock
+              </Button>
             </Section>
             <Separator />
           </>

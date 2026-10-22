@@ -93,8 +93,10 @@ def display_name(user: User | None) -> str:
 
 
 def can_view_shares(user: User | None) -> bool:
-    """Approved, active accounts, admins included; they open reports under Shared with me."""
-    return bool(user and user.is_active and (user.approval_status or "approved") == "approved")
+    """Active accounts that are not blocked, admins included; they open reports under Shared with me."""
+    from app.services.signup_approval_service import can_use_app
+
+    return can_use_app(user)
 
 
 def share_public(share: ReportShare, viewer: User | None = None, now: datetime | None = None) -> dict[str, Any]:

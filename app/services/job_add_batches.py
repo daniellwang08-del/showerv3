@@ -24,6 +24,7 @@ from app.models.database import (
     User,
     UserJobStatus,
 )
+from app.services.signup_approval_service import can_use_app_clause
 
 logger = get_logger(__name__)
 
@@ -32,8 +33,6 @@ SHARE_DEFAULTS = frozenset({"private", "team", "all"})
 BATCH_SOURCES = frozenset({"manual", "paste", "attachment", "extension", "site"})
 MAX_BATCH_JOBS = 2000
 MAX_SHARE_USERS = 200
-
-_TEAM_APPROVED = "approved"
 
 
 def utcnow() -> datetime:
@@ -345,11 +344,7 @@ async def _replace_share_users(
     if not cleaned:
         return []
     approved = await session.execute(
-        select(User.id).where(
-            User.id.in_(cleaned),
-            User.is_active.is_(True),
-            User.approval_status == _TEAM_APPROVED,
-        )
+        select(User.id).where(User.id.in_(cleaned), can_use_app_clause())
     )
     allowed = {row[0] for row in approved.all()}
     kept = [uid for uid in cleaned if uid in allowed]
@@ -518,11 +513,7 @@ async def update_share(
 async def list_share_targets(session: AsyncSession, user_id: str) -> list[dict[str, Any]]:
     result = await session.execute(
         select(User)
-        .where(
-            User.id != user_id,
-            User.is_active.is_(True),
-            User.approval_status == _TEAM_APPROVED,
-        )
+        .where(User.id != user_id, can_use_app_clause())
         .order_by(func.lower(User.email))
         .limit(300)
     )

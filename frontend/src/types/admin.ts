@@ -10,19 +10,6 @@ export interface AdminUser {
   approved_at?: string | null;
 }
 
-export interface SignupRequest {
-  id: string;
-  email: string;
-  approval_status: 'pending';
-  requested_at: string;
-  active_key: { created_at: string; expires_at: string } | null;
-}
-
-export interface IssuedAccessKey {
-  key: string;
-  expires_at: string;
-}
-
 export interface SystemSettingItem {
   key: string;
   value: string | number | boolean;

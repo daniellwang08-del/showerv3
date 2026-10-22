@@ -284,7 +284,7 @@ describe('AdminDataPage, analytics', () => {
     expect(top).toHaveTextContent('110');
     expect(top).toHaveTextContent('3×');
     expect(top).toHaveTextContent('Resume tailoring');
-    expect(rejected).toHaveTextContent('rejected');
+    expect(rejected).toHaveTextContent('Blocked');
 
     await waitFor(() =>
       expect(api.fetchTailoringRunsSeries).toHaveBeenCalledWith(

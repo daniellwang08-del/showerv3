@@ -5,13 +5,7 @@ import { requestOnce } from '../utils/requestOnce';
 export type AuthPage = 'login' | 'signup';
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected';
 
-/** The API marks "signed in, but the signup still waits for an admin" with this header on a 403. */
-export function isPendingApprovalError(error: unknown): boolean {
-  const res = (error as { response?: { status?: number; headers?: Record<string, unknown> } })?.response;
-  return res?.status === 403 && res.headers?.['x-auth-status'] === 'pending';
-}
-
-/** Server explanation when a session ended because the signup was declined. */
+/** Server explanation when a session ended because an admin blocked the account. */
 function rejectionNotice(error: unknown): string | null {
   const res = (error as { response?: { status?: number; headers?: Record<string, unknown>; data?: { detail?: unknown } } })
     ?.response;
@@ -35,8 +29,6 @@ export function useAuth() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authPage, setAuthPage] = useState<AuthPage>('login');
-  // Signed in with a pending signup: only the approval screen is reachable.
-  const [pendingApproval, setPendingApproval] = useState(false);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
 
   // Fetch (or refetch) the current user from /auth/me. Returns the user or null.
@@ -48,12 +40,10 @@ export function useAuth() {
       const res = await apiClient.get('/auth/me');
       const nextUser: AuthUser | null = res.data ?? null;
       setUser(nextUser);
-      setPendingApproval(false);
       setIsAuthenticated(true);
       return nextUser;
     } catch (error) {
       setUser(null);
-      setPendingApproval(isPendingApprovalError(error));
       const notice = rejectionNotice(error);
       if (notice) setAuthNotice(notice);
       setIsAuthenticated(false);
@@ -78,7 +68,6 @@ export function useAuth() {
           const notice = rejectionNotice(error);
           if (notice) setAuthNotice(notice);
           setIsAuthenticated(false);
-          setPendingApproval(false);
           setUser(null);
         }
         return Promise.reject(error);
@@ -93,7 +82,6 @@ export function useAuth() {
       await apiClient.post('/auth/logout');
     } finally {
       setIsAuthenticated(false);
-      setPendingApproval(false);
       setUser(null);
     }
   }, []);
@@ -115,7 +103,6 @@ export function useAuth() {
 
   return {
     isAuthenticated,
-    pendingApproval,
     authNotice,
     user,
     authPage,

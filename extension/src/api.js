@@ -128,7 +128,7 @@ async function checkStatus(res, auth) {
   } catch {
     /* non-JSON error body */
   }
-  // The server sets X-Auth-Status when the account's signup is pending or was declined.
+  // The server sets X-Auth-Status when an admin has blocked the account.
   const accountState = res.headers.get("x-auth-status");
   if (res.status === 401) {
     if (auth) {
@@ -139,7 +139,7 @@ async function checkStatus(res, auth) {
     throw new ApiError(errorDetail(data, "Incorrect email or password."), 401, "auth");
   }
   if (res.status === 403 && accountState) {
-    const reason = errorDetail(data, "This account is not approved yet.");
+    const reason = errorDetail(data, "This account has been blocked. Contact an administrator.");
     if (auth) await handleUnauthorized(reason);
     throw new ApiError(reason, 403, "auth");
   }

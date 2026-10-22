@@ -200,7 +200,7 @@ async def list_auto_prepare_users(
     full: bool = False,
     user_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return opted-in approved users (id + flags), optionally limited to ``user_ids``."""
+    """Return opted-in users who can use the app (id + flags), optionally limited to ``user_ids``."""
     from app.services.signup_approval_service import can_use_app_clause
 
     async with get_session() as session:

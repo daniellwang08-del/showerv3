@@ -17,13 +17,13 @@ function stubFetch(status, body, headers = {}) {
   return calls;
 }
 
-test("a pending-approval 403 signs out and surfaces the server reason", async () => {
+test("a blocked-account 403 signs out and surfaces the server reason", async () => {
   await storage.setToken("tok");
   let reason;
   api.onUnauthorized((r) => (reason = r));
-  stubFetch(403, { detail: "Your account is waiting for admin approval." }, { "X-Auth-Status": "pending" });
+  stubFetch(403, { detail: "This account has been blocked. Contact an administrator." }, { "X-Auth-Status": "rejected" });
   await assert.rejects(api.getProfile(), (err) => err.status === 403 && err.kind === "auth");
-  assert.equal(reason, "Your account is waiting for admin approval.");
+  assert.equal(reason, "This account has been blocked. Contact an administrator.");
   assert.equal(await storage.getToken(), null);
 });
 
@@ -37,13 +37,13 @@ test("an ordinary 403 keeps the session", async () => {
   assert.equal(await storage.getToken(), "tok");
 });
 
-test("a declined signup 401 passes its reason; a plain 401 does not", async () => {
+test("a blocked-account 401 passes its reason; a plain 401 does not", async () => {
   await storage.setToken("tok");
   let reason = "unset";
   api.onUnauthorized((r) => (reason = r));
-  stubFetch(401, { detail: "Your signup request was declined." }, { "X-Auth-Status": "rejected" });
-  await assert.rejects(api.getProfile(), /declined/);
-  assert.equal(reason, "Your signup request was declined.");
+  stubFetch(401, { detail: "This account has been blocked. Contact an administrator." }, { "X-Auth-Status": "rejected" });
+  await assert.rejects(api.getProfile(), /blocked/);
+  assert.equal(reason, "This account has been blocked. Contact an administrator.");
 
   await storage.setToken("tok");
   stubFetch(401, { detail: "Invalid token" });

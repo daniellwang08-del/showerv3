@@ -2,9 +2,7 @@
 
 Used by the HTTP dependency (`get_current_user`) and the WebSocket handshake so
 both enforce the same rules: valid signature, not revoked, issued after the
-user's session cutoff, account active, and signup approved. Pending users are
-only let through where the caller explicitly allows it (signup status and
-access key redemption).
+user's session cutoff, account active, and not blocked by an admin.
 """
 
 from __future__ import annotations
@@ -15,15 +13,14 @@ from datetime import timezone
 from app.core.logging import get_logger
 from app.models.database import User
 from app.services.auth_service import AuthService
-from app.services.signup_approval_service import APPROVAL_APPROVED, APPROVAL_PENDING
+from app.services.signup_approval_service import APPROVAL_REJECTED, is_blocked
 from app.storage.database import get_session
 from app.storage.user_repository import UserRepository
 
 logger = get_logger(__name__)
 
 AUTH_STATUS_HEADER = "X-Auth-Status"
-PENDING_DETAIL = "Your account is waiting for admin approval."
-REJECTED_DETAIL = "Your signup request was declined. Contact an administrator."
+REJECTED_DETAIL = "This account has been blocked. Contact an administrator."
 
 
 @dataclass
@@ -50,7 +47,7 @@ def issued_before_cutoff(payload: dict, user: User) -> bool:
     return int(iat) < int(cutoff.replace(tzinfo=timezone.utc).timestamp())
 
 
-async def resolve_session(token: str | None, *, allow_pending: bool = False) -> ResolvedSession:
+async def resolve_session(token: str | None) -> ResolvedSession:
     """Validate `token` against the DB. Raises SessionAuthError; never fails open."""
     if not token:
         raise SessionAuthError(401, "Not authenticated", "missing_token")
@@ -79,12 +76,8 @@ async def resolve_session(token: str | None, *, allow_pending: bool = False) -> 
     if issued_before_cutoff(payload, user):
         raise SessionAuthError(401, "Session expired. Please sign in again.", "session_cutoff")
 
-    approval = getattr(user, "approval_status", APPROVAL_APPROVED) or APPROVAL_APPROVED
-    if approval == APPROVAL_PENDING:
-        if not allow_pending:
-            raise SessionAuthError(403, PENDING_DETAIL, "approval_pending", auth_status=APPROVAL_PENDING)
-    elif approval != APPROVAL_APPROVED:
-        # Rejected accounts hold no usable session: clients treat this as signed out.
-        raise SessionAuthError(401, REJECTED_DETAIL, "approval_rejected", auth_status=approval)
+    if is_blocked(user):
+        # Blocked accounts hold no usable session: clients treat this as signed out.
+        raise SessionAuthError(401, REJECTED_DETAIL, "approval_rejected", auth_status=APPROVAL_REJECTED)
 
     return ResolvedSession(payload=payload, user=user)

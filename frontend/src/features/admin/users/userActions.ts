@@ -111,7 +111,7 @@ export function actionTitle(a: PendingAction): string {
     case 'delete':
       return 'Delete user?';
     case 'approval':
-      return a.next === 'approved' ? 'Approve signup?' : 'Reject signup?';
+      return a.next === 'approved' ? 'Unblock account?' : 'Block account?';
     case 'bulk': {
       const n = a.users.length;
       return {
@@ -129,7 +129,7 @@ export function actionConfirmLabel(a: PendingAction): string {
   if (a.kind === 'delete' || (a.kind === 'bulk' && a.bulk === 'delete')) return 'Delete';
   if (a.kind === 'role') return a.next ? 'Promote' : 'Demote';
   if (a.kind === 'active') return a.next ? 'Enable' : 'Disable';
-  if (a.kind === 'approval') return a.next === 'approved' ? 'Approve' : 'Reject';
+  if (a.kind === 'approval') return a.next === 'approved' ? 'Unblock' : 'Block';
   return 'Confirm';
 }
 
@@ -149,7 +149,7 @@ export function actionSuccess(a: PendingAction): string {
     case 'delete':
       return `${a.user.email} deleted`;
     case 'approval':
-      return `${a.user.email} ${a.next}`;
+      return `${a.user.email} ${a.next === 'approved' ? 'unblocked' : 'blocked'}`;
     case 'bulk': {
       const verb = { promote: 'Promoted', demote: 'Demoted', enable: 'Enabled', disable: 'Disabled', delete: 'Deleted' }[
         a.bulk

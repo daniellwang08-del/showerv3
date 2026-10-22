@@ -72,7 +72,7 @@ class UserRepository:
         return result.scalar_one_or_none()
 
     async def list_active_users(self, *, limit: int = 500) -> list[User]:
-        """Return active, approved users ordered by email (for analysis multi-select)."""
+        """Return active users that are not blocked, ordered by email (for analysis multi-select)."""
         from app.services.signup_approval_service import can_use_app_clause
 
         stmt = (
@@ -108,16 +108,13 @@ class UserRepository:
     async def create(self, email: str, password: str) -> User:
         """Create a new user with hashed password.
 
-        The first active admin slot is granted automatically so a fresh
-        install can open System Settings / User Management without a
-        manual SQL bootstrap. Everyone else starts "pending" until an admin
-        approves the signup or the user redeems an admin-issued access key.
+        Signup is open: the account can use NAO at once. The first active
+        admin slot is granted automatically so a fresh install can open
+        System Settings / User Management without a manual SQL bootstrap.
+        Everyone else gets the welcome credits and any packages already
+        given to their email.
         """
-        from app.services.signup_approval_service import (
-            APPROVAL_APPROVED,
-            APPROVAL_PENDING,
-            utcnow,
-        )
+        from app.services.signup_approval_service import APPROVAL_APPROVED, utcnow
 
         email = email.lower().strip()
         password_hash = AuthService.hash_password(password)
@@ -128,8 +125,8 @@ class UserRepository:
             password_hash=password_hash,
             is_active=True,
             is_admin=is_first_admin,
-            approval_status=APPROVAL_APPROVED if is_first_admin else APPROVAL_PENDING,
-            approved_at=utcnow() if is_first_admin else None,
+            approval_status=APPROVAL_APPROVED,
+            approved_at=utcnow(),
         )
 
         self.session.add(user)

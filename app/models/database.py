@@ -26,9 +26,9 @@ class User(Base):
     # Platform admin. Existing users are bootstrapped true via migration 048;
     # new signups default to false.
     is_admin = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
-    # Signup gate: "pending" until an admin approves the request or the user
-    # redeems an admin-issued access key; only "approved" accounts may use the
-    # app or the extension. Rows that predate migration 076 are "approved".
+    # Signup is open, so accounts are "approved" from creation. "rejected" means
+    # an admin blocked the account. "pending" is a legacy value from the old
+    # approval flow and is treated like "approved" (see signup_approval_service).
     approval_status = Column(String(16), nullable=False, server_default="approved", index=True)
     approved_at = Column(DateTime, nullable=True)
     approved_by = Column(String(36), nullable=True)
@@ -1169,7 +1169,7 @@ class AgentChatSession(Base):
 
 
 class SignupAccessKey(Base):
-    """Admin-issued one-time key that approves a pending signup when redeemed.
+    """Retired: one-time keys from the old signup approval flow, kept for history.
 
     Only an HMAC of the key is stored; the plaintext is shown to the admin once.
     Issuing a new key revokes the user's earlier unused keys.

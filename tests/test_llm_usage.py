@@ -137,13 +137,13 @@ def test_streamed_reply_is_recorded_as_estimated():
 
 @pytest.mark.parametrize(
     ("active", "status", "allowed"),
-    [(True, "approved", True), (True, "pending", False), (True, "rejected", False), (False, "approved", False)],
+    [(True, "approved", True), (True, "pending", True), (True, "rejected", False), (False, "approved", False)],
 )
-def test_only_active_approved_accounts_can_use_the_app(active, status, allowed):
+def test_active_accounts_that_are_not_blocked_can_use_the_app(active, status, allowed):
     assert can_use_app(User(is_active=active, approval_status=status)) is allowed
 
 
-def test_fanout_clause_requires_approval_not_just_active():
+def test_fanout_clause_excludes_blocked_accounts_not_just_inactive():
     sql = str(can_use_app_clause().compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
     assert "users.is_active IS true" in sql
-    assert "users.approval_status = 'approved'" in sql
+    assert "users.approval_status != 'rejected'" in sql

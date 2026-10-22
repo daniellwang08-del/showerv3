@@ -7,8 +7,8 @@ import { PageLayout } from '@/components/app/PageLayout';
 import { Button } from '@/components/ui/button';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SIGNUP_CREDITS } from '@/features/plans/plansModel';
 import { ConfirmActionDialog } from './ConfirmActionDialog';
-import { SignupRequestsPanel } from './SignupRequestsPanel';
 import { accountStatus, type AccountStatus } from './UserBadges';
 import { UserDetailSheet } from './UserDetailSheet';
 import { UsersTable, type SortKey, type SortState } from './UsersTable';
@@ -25,12 +25,11 @@ const ROLE_FILTERS: Array<{ value: RoleFilter; label: string }> = [
 const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'Any status' },
   { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
-  { value: 'rejected', label: 'Rejected' },
+  { value: 'blocked', label: 'Blocked' },
   { value: 'disabled', label: 'Disabled' },
 ];
 
-const STATUS_ORDER: Record<AccountStatus, number> = { active: 0, pending: 1, rejected: 2, disabled: 3 };
+const STATUS_ORDER: Record<AccountStatus, number> = { active: 0, blocked: 1, disabled: 2 };
 
 const BULK_BUTTONS: Array<{ kind: BulkKind; label: string; icon: typeof Shield }> = [
   { kind: 'promote', label: 'Promote', icon: Shield },
@@ -129,7 +128,7 @@ export function AdminUsersPage() {
   return (
     <PageLayout
       title="Users"
-      description="Approve signups and manage roles, account status, and passwords. Select rows for bulk actions; click a row for details."
+      description={`Anyone can sign up and starts with ${SIGNUP_CREDITS} free credits. Manage roles, account status, and passwords here. Select rows for bulk actions; click a row for details.`}
       actions={
         <Button
           variant="outline"
@@ -142,8 +141,6 @@ export function AdminUsersPage() {
       }
     >
       <div className="space-y-3">
-        <SignupRequestsPanel />
-
         {loadError && (
           <div
             role="alert"

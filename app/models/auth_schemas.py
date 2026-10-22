@@ -58,19 +58,7 @@ class AuthResponse(BaseModel):
     access_token: str | None = None
     token_type: str | None = None
     expires_in: int | None = None
-    # "pending" means the account exists but waits for admin approval or an
-    # access key; the session it carries only reaches /auth/approval*.
     approval_status: str | None = None
-
-
-class SignupApprovalState(BaseModel):
-    email: str
-    approval_status: str
-    requested_at: datetime
-
-
-class RedeemAccessKeyRequest(BaseModel):
-    key: str = Field(..., min_length=1, max_length=64)
 
 
 class UserResponse(BaseModel):

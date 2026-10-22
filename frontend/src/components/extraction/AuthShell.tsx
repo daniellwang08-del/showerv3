@@ -7,6 +7,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { NaoWordmark } from '@/components/brand/NaoLogo';
+import { SIGNUP_CREDITS } from '@/features/plans/plansModel';
 import { usePublicViewport } from '../../hooks/usePublicViewport';
 import { LandingHeader } from '../landing/LandingHeader';
 import { Eyebrow, LANDING_CONTAINER } from '../landing/landingUi';
@@ -164,7 +165,7 @@ export function AuthShell({
                 <p className="mt-1.5 text-sm text-white/60">
                   {isLogin
                     ? 'Use the email and password for your workspace.'
-                    : 'No credit card. An admin approves new accounts before the workspace opens.'}
+                    : `No credit card. Start right away with ${SIGNUP_CREDITS} free credits.`}
                 </p>
               </div>
 

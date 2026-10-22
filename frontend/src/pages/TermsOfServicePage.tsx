@@ -47,7 +47,7 @@ export function TermsOfServicePage() {
           items={[
             'You must be legally able to enter a binding agreement and of working age in your jurisdiction.',
             'You must provide accurate account information and keep credentials confidential.',
-            'Accounts may require admin approval before full access is granted.',
+            'Anyone can create an account. New accounts receive free starter credits once; creating extra accounts to collect more credits is not allowed.',
             "You may not share your account or use another person's account without permission.",
           ]}
         />

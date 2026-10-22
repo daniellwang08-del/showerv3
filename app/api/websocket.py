@@ -184,7 +184,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         cookies = ws.cookies
         token = cookies.get("access_token")
 
-    # Same rules as HTTP (approved, active, not revoked). Fails closed: if the
+    # Same rules as HTTP (active, not blocked, not revoked). Fails closed: if the
     # account cannot be verified, the client reconnects and tries again.
     user_id = await _ws_authorized_user_id(token)
     if not user_id:

@@ -14,7 +14,6 @@ import type { NavSection } from './nav';
 import { UserMenu, type ShellUser } from './UserMenu';
 import { useOpenJob } from '@/features/jobs/useOpenJob';
 import { JobAddHistory } from '@/features/jobs/JobAddHistory';
-import { usePendingSignupCount } from '@/features/admin/users/signupRequests';
 import { JOBS_PATH, newJobsBadgeText, useNewJobsBadge } from '@/features/jobs/useNewJobsBadge';
 import { useTeamOverview } from '@/features/team/useTeamOverview';
 import { useVisibleNav } from './useVisibleNav';
@@ -85,14 +84,12 @@ export function AppSidebar({ nav, variant, user, onLogout, collapsed = false, on
   const location = useLocation();
   const openJob = useOpenJob();
   const isApplicant = variant === 'applicant';
-  const pendingSignups = usePendingSignupCount(variant === 'admin');
   const newJobs = useNewJobsBadge(isApplicant);
   const teamInvites = useTeamOverview(isApplicant).data?.invites.length ?? 0;
   const sections = useVisibleNav(nav);
   const store = useQuery({ queryKey: STORE_KEY, queryFn: fetchStore, staleTime: 60_000, enabled: isApplicant });
   const navBadges: Record<string, NavBadge | null> = {
     '/app/team': countBadge(teamInvites, `${teamInvites} team invitation${teamInvites === 1 ? '' : 's'}`),
-    '/admin/users': countBadge(pendingSignups, `${pendingSignups} pending signup${pendingSignups === 1 ? '' : 's'}`),
     [JOBS_PATH]:
       newJobs > 0
         ? {

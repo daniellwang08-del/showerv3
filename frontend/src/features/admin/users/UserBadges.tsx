@@ -21,20 +21,18 @@ export function RoleBadge({ user, className }: { user: AdminUser; className?: st
   );
 }
 
-export type AccountStatus = 'active' | 'disabled' | 'pending' | 'rejected';
+export type AccountStatus = 'active' | 'disabled' | 'blocked';
 
 export function accountStatus(user: AdminUser): AccountStatus {
   if (!user.is_active) return 'disabled';
-  if (user.approval_status === 'pending') return 'pending';
-  if (user.approval_status === 'rejected') return 'rejected';
+  if (user.approval_status === 'rejected') return 'blocked';
   return 'active';
 }
 
 const STATUS_STYLE: Record<AccountStatus, { label: string; badge: string; dot: string }> = {
   active: { label: 'Active', badge: 'bg-status-ready/10 text-status-ready', dot: 'bg-status-ready' },
   disabled: { label: 'Disabled', badge: 'bg-status-failed/10 text-status-failed', dot: 'bg-status-failed' },
-  pending: { label: 'Pending approval', badge: 'bg-brand-soft text-brand', dot: 'bg-brand' },
-  rejected: { label: 'Rejected', badge: 'bg-status-failed/10 text-status-failed', dot: 'bg-status-failed' },
+  blocked: { label: 'Blocked', badge: 'bg-status-failed/10 text-status-failed', dot: 'bg-status-failed' },
 };
 
 export function StatusBadge({ user, className }: { user: AdminUser; className?: string }) {

@@ -23,10 +23,6 @@ const named = <T extends Record<string, unknown>>(loader: () => Promise<T>, name
   lazy(() => loader().then((m) => ({ default: m[name] as React.ComponentType<any> })));
 
 const AuthScreen = named(() => import('./components/extraction/AuthScreen'), 'AuthScreen');
-const PendingApprovalScreen = named(
-  () => import('./components/extraction/PendingApprovalScreen'),
-  'PendingApprovalScreen',
-);
 const JobActionModal = named(() => import('./components/extraction/JobActionModal'), 'JobActionModal');
 const ConfirmDialog = named(() => import('./components/extraction/ConfirmDialog'), 'ConfirmDialog');
 const LandingPage = named(() => import('./pages/LandingPage'), 'LandingPage');
@@ -290,8 +286,7 @@ function handleWsEvent(event: WsEvent) {
 }
 
 function App() {
-  const { isAuthenticated, pendingApproval, authNotice, user, authPage, logout, onAuthSuccess, refreshUser } =
-    useAuth();
+  const { isAuthenticated, authNotice, user, authPage, logout, onAuthSuccess, refreshUser } = useAuth();
   const navigate = useNavigate();
 
   const modal = useModalStore((s) => s.modal);
@@ -332,15 +327,6 @@ function App() {
 
   if (isAuthenticated === null) {
     return <BrandedLoader fullscreen label="Starting NAO…" />;
-  }
-
-  if (pendingApproval) {
-    return (
-      <Suspense fallback={<BrandedLoader fullscreen label="Loading…" />}>
-        <PageTitle title="Waiting for approval" />
-        <PendingApprovalScreen onResolved={refreshUser} onSignOut={handleLogout} />
-      </Suspense>
-    );
   }
 
   if (!isAuthenticated) {

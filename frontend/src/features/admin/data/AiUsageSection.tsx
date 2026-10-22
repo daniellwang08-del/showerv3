@@ -321,12 +321,8 @@ function FeatureBreakdown({ data, loading }: { data: AiUsageOverview | undefined
 }
 
 function StatusBadge({ status }: { status: string | null }) {
-  if (!status || status === 'approved') return null;
-  return (
-    <Badge variant={status === 'rejected' ? 'destructive' : 'outline'} className="capitalize">
-      {status}
-    </Badge>
-  );
+  if (status !== 'rejected') return null;
+  return <Badge variant="destructive">Blocked</Badge>;
 }
 
 function UsageTable({ rows, loading }: { rows: AiUsageUserRow[] | undefined; loading: boolean }) {

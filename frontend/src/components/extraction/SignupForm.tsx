@@ -1,5 +1,6 @@
 import { useMemo, useState, FormEvent } from 'react';
 import { Mail, Lock, Check, X, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
 import { apiClient } from '../../api/client';
 import {
   errorBoxClass,
@@ -54,8 +55,10 @@ export function SignupForm({ onSignup, onSwitchToLogin }: SignupFormProps) {
     setLoading(true);
     try {
       const response = await apiClient.post('/auth/signup', { email, password });
-      if (response.data.success) onSignup();
-      else setError(response.data.message || 'Signup failed');
+      if (response.data.success) {
+        toast.success(response.data.message || 'Welcome to NAO.');
+        onSignup();
+      } else setError(response.data.message || 'Signup failed');
     } catch (err: any) {
       let errorMessage = 'Signup failed. Please try again.';
       if (err.response?.data?.detail) {

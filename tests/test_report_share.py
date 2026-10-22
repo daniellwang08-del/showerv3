@@ -51,18 +51,19 @@ class TestFields:
         assert rs.display_name(user()) == "sam"
         assert rs.display_name(None) == "A NAO user"
 
-    def test_approved_active_accounts_can_receive_reports(self):
+    def test_active_accounts_that_are_not_blocked_can_receive_reports(self):
         assert rs.can_view_shares(_user("u", "a@x.com"))
         assert rs.can_view_shares(_user("u", "a@x.com", is_admin=True))
+        assert rs.can_view_shares(_user("u", "a@x.com", approval_status="pending"))
         assert not rs.can_view_shares(None)
         assert not rs.can_view_shares(_user("u", "a@x.com", is_active=False))
-        assert not rs.can_view_shares(_user("u", "a@x.com", approval_status="pending"))
+        assert not rs.can_view_shares(_user("u", "a@x.com", approval_status="rejected"))
 
     def test_resolve_viewers_names_missing_accounts(self):
         users = {
             "a@x.com": _user("ua", "a@x.com"),
             "admin@x.com": _user("ad", "admin@x.com", is_admin=True),
-            "wait@x.com": _user("uw", "wait@x.com", approval_status="pending"),
+            "wait@x.com": _user("uw", "wait@x.com", approval_status="rejected"),
         }
         assert [u.id for u in rs.resolve_viewers(["a@x.com", "admin@x.com"], users)] == ["ua", "ad"]
         with pytest.raises(rs.ShareError, match="b@x.com does not have a NAO account"):
