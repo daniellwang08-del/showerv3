@@ -700,7 +700,9 @@
 
   // Classify a field label into a stable identity / EEO / work-authorization /
   // consent category, or null. MUST stay identical to the copy in src/panel/autofill/form.js so
-  // remembered keys line up. Order matters (work_auth keywords overlap citizen).
+  // remembered keys line up. Order matters: citizenship and export-control
+  // status are not work authorization (a green card holder is authorized but not
+  // a citizen), so they are never cached and the server answers them from the profile.
   function answerCategory(label) {
     const s = (label || "").toLowerCase();
     if (!s) return null;
@@ -710,7 +712,8 @@
     if (/veteran/.test(s)) return "veteran";
     if (/disab/.test(s)) return "disability";
     if (/sponsor/.test(s)) return "sponsorship";
-    if (/citizen|authoriz|eligible to work|right to work|legally authorized/.test(s)) return "work_auth";
+    if (/citizen|u\.?\s?s\.? person|export.control|\bitar\b|\bear\b|permanent resident|green ?card/.test(s)) return null;
+    if (/authoriz|eligible to work|right to work|legally authorized/.test(s)) return "work_auth";
     if (/how did you hear|hear about (us|this|the)/.test(s)) return "how_hear";
     if (/\bconsent\b|acknowledg|i agree|\bterms\b|privacy/.test(s)) return "consent";
     return null;

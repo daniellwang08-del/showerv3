@@ -121,6 +121,7 @@ export function completeForm(overrides: Partial<ProfileFormData> = {}): ProfileF
       disability_status: null,
       work_authorized: null,
       needs_sponsorship: null,
+      us_citizenship: '',
     },
     address: {
       line1: '',

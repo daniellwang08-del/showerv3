@@ -358,6 +358,13 @@ def _build_autofill_prompt(
         "authorized to work in the United States?' or 'Do you have unrestricted authorization to "
         "work in the US?' -> choose the affirmative option (e.g. 'Yes'); 'Do you now or in the "
         "future require sponsorship?' -> choose 'No'.\n"
+        "  * U.S. citizenship / permanent residency / 'U.S. person' status, including questions "
+        "framed as export control, EAR or ITAR that list options such as 'U.S. citizen', "
+        "'lawful permanent resident', 'protected individual', 'Other': these ask WHO the "
+        "candidate is, not for a disclosure, so the safest-option rule below does NOT apply. "
+        "Answer from 'U.S. citizenship status' in the EEO section: 'U.S. citizen' -> the citizen "
+        "option; 'U.S. permanent resident' -> the permanent resident / green card option; "
+        "'Neither' -> 'Other' / 'None of the above'.\n"
         "  * Salary / compensation expectations: if the profile gives no figure, estimate a "
         "reasonable market-rate number or range for this role's title, seniority, and location "
         "(use the job's region: US market for a US job, EU market for an EU job, etc.). Format "
@@ -373,7 +380,8 @@ def _build_autofill_prompt(
         "NEVER select more than one option, even when the control is multi=true. Never dump "
         "every option into option_values.\n"
         "  * Security / clearance / social-security / criminal / export-control / sanctions "
-        "questions: ALWAYS choose the safest / least-committing option, typically 'None', "
+        "questions (other than the citizenship status questions above): ALWAYS choose the "
+        "safest / least-committing option, typically 'None', "
         "'None of the above', 'N/A', 'No', 'I do not hold a clearance', 'No clearance', or "
         "'I prefer not to answer'. NEVER select multiple clearance levels or every social-"
         "security / identity option. Positive bias does NOT apply to these questions.\n"
@@ -1036,8 +1044,6 @@ def _is_safest_only_label(label: str) -> bool:
         "hold any clearance",
         "export control",
         "export-controlled",
-        "itar",
-        "ear ",
         "sanction",
         "denied party",
         "criminal",
@@ -1048,10 +1054,100 @@ def _is_safest_only_label(label: str) -> bool:
     )
     if any(k in low for k in keys):
         return True
+    # Whole words only: a substring "ear " would match "year ".
+    if re.search(r"\b(itar|ear)\b", low):
+        return True
     # Bare "clearance" (avoid matching "security clearance questionnaire" already covered).
     if re.search(r"\bclearance\b", low) and not re.search(r"\bsecurity question", low):
         return True
     return False
+
+
+US_CITIZEN = "U.S. citizen"
+US_PERMANENT_RESIDENT = "U.S. permanent resident"
+NOT_US_PERSON = "Neither"
+_US_CITIZENSHIP_VALUES = (US_CITIZEN, US_PERMANENT_RESIDENT, NOT_US_PERSON)
+
+_CITIZEN_OPTION_RE = re.compile(r"citizen", re.I)
+_NOT_CITIZEN_RE = re.compile(r"\bnon[\s-]*(?:u\.?\s?s\.?\s*|united states\s+)?citizen|\bnot\b", re.I)
+_RESIDENT_OPTION_RE = re.compile(r"permanent resident|green\s*card|\blpr\b", re.I)
+_PROTECTED_OPTION_RE = re.compile(r"protected individual|refugee|asylee|asylum", re.I)
+_US_PERSON_LABEL_RE = re.compile(r"\bu\.?\s?s\.?\s+person\b|\bunited states person\b", re.I)
+_WORK_AUTH_LABEL_RE = re.compile(r"authori[sz]|eligib|sponsor|right to work|visa", re.I)
+_NOT_US_PERSON_OPTIONS = (
+    "none of the above",
+    "none of these",
+    "none of the following",
+    "neither",
+    "other",
+    "foreign national",
+    "not a u.s.",
+    "not a us",
+)
+
+
+def us_citizenship(prefs: Any) -> str:
+    """The candidate's U.S. status for citizenship / export-control questions.
+
+    Uses the saved answer when there is one. Otherwise someone authorized to
+    work without sponsorship is treated as a U.S. citizen (the common case),
+    and anyone who needs sponsorship or lacks authorization as neither.
+    """
+    p = prefs if isinstance(prefs, dict) else {}
+    saved = p.get("us_citizenship")
+    if saved in _US_CITIZENSHIP_VALUES:
+        return saved
+    if p.get("needs_sponsorship") is True or p.get("work_authorized") is False:
+        return NOT_US_PERSON
+    return US_CITIZEN
+
+
+def _is_yes_no(options: list[str]) -> bool:
+    opts = {str(o).strip().lower().rstrip(".") for o in options if str(o).strip()}
+    return bool(opts) and opts <= {"yes", "no", "y", "n"} and len(opts) >= 2
+
+
+def _is_us_status_question(label: str, options: list[str]) -> bool:
+    """Questions that ask for U.S. citizenship / permanent residency / "U.S. person"
+    status, often framed as EAR or ITAR export control. Plain work-authorization
+    questions are left to the model."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if not opts:
+        return False
+    citizen_opt = any(_CITIZEN_OPTION_RE.search(o) and not _NOT_CITIZEN_RE.search(o) for o in opts)
+    peer_opt = any(_RESIDENT_OPTION_RE.search(o) or _PROTECTED_OPTION_RE.search(o) for o in opts)
+    if citizen_opt and peer_opt:
+        return True
+    if not _is_yes_no(opts):
+        return False
+    low = (label or "").lower()
+    if _WORK_AUTH_LABEL_RE.search(low) or _NOT_CITIZEN_RE.search(low):
+        return False
+    return bool(_US_PERSON_LABEL_RE.search(low) or _CITIZEN_OPTION_RE.search(low))
+
+
+def _us_status_option(label: str, options: list[str], status: str) -> str | None:
+    """Pick the option matching ``status`` for a question ``_is_us_status_question`` accepted."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    if _is_yes_no(opts):
+        low = (label or "").lower()
+        counts_residents = bool(_US_PERSON_LABEL_RE.search(low) or _RESIDENT_OPTION_RE.search(low))
+        yes = status == US_CITIZEN or (counts_residents and status == US_PERMANENT_RESIDENT)
+        want = "yes" if yes else "no"
+        return _pick_option(opts, equals=[want, want[0]])
+    if status == US_CITIZEN:
+        for o in opts:
+            if _CITIZEN_OPTION_RE.search(o) and not _NOT_CITIZEN_RE.search(o):
+                return o
+        return None
+    if status == US_PERMANENT_RESIDENT:
+        for o in opts:
+            if _RESIDENT_OPTION_RE.search(o):
+                return o
+        return None
+    return _pick_option(opts, equals=["no", "none"], includes=list(_NOT_US_PERSON_OPTIONS)) or next(
+        (o for o in opts if _CITIZEN_OPTION_RE.search(o) and _NOT_CITIZEN_RE.search(o)), None
+    )
 
 
 def _is_eeo_exclusive_label(label: str) -> bool:
@@ -1243,6 +1339,7 @@ def _parse_autofill_results(
     orientation_pref = eeo.get("sexual_orientation")
     if not isinstance(orientation_pref, str):
         orientation_pref = None
+    citizenship = us_citizenship(eeo)
 
     # handle -> cid -> spec
     spec_map: dict[int, dict[str, AutofillControlIn]] = {}
@@ -1329,7 +1426,16 @@ def _parse_autofill_results(
                     if matched and matched not in seen_vals:
                         seen_vals.add(matched)
                         option_values.append(matched)
-                if _is_sexual_orientation_label(spec.label):
+                us_status = (
+                    _us_status_option(spec.label, spec.options or [], citizenship)
+                    if _is_us_status_question(spec.label, spec.options or [])
+                    else None
+                )
+                if us_status:
+                    option_values = [us_status]
+                    needs_user = False
+                    reason = None
+                elif _is_sexual_orientation_label(spec.label):
                     option_values = _clamp_sexual_orientation_values(
                         option_values, spec.options or [], orientation_pref
                     )
@@ -1363,7 +1469,17 @@ def _parse_autofill_results(
                 option = None
             elif spec.options:
                 matched = _match_option(value or option or "", spec.options)
-                if _is_sexual_orientation_label(spec.label):
+                us_status = (
+                    _us_status_option(spec.label, spec.options, citizenship)
+                    if _is_us_status_question(spec.label, spec.options)
+                    else None
+                )
+                if us_status:
+                    value = us_status
+                    option = us_status
+                    needs_user = False
+                    reason = None
+                elif _is_sexual_orientation_label(spec.label):
                     clamped = _clamp_sexual_orientation_values(
                         [matched] if matched and not needs_user else [],
                         spec.options,
@@ -1764,6 +1880,7 @@ def _eeo_preferences_text(prefs: Any) -> str:
         ("Disability status", _yn("disability_status")),
         ("Authorized to work", _yn("work_authorized")),
         ("Needs visa sponsorship", _yn("needs_sponsorship")),
+        ("U.S. citizenship status", us_citizenship(p)),
     ]
     lines = [f"- {label}: {val}" for label, val in rows if val]
     if not lines:
@@ -1795,6 +1912,7 @@ def _eeo_for_autofill(prefs: Any) -> dict:
         "disability": _bool("disability_status", _EEO_DEFAULTS["disability"]),
         "authorized": _bool("work_authorized", _EEO_DEFAULTS["authorized"]),
         "sponsorship": _bool("needs_sponsorship", _EEO_DEFAULTS["sponsorship"]),
+        "usCitizenship": us_citizenship(p),
     }
 
 

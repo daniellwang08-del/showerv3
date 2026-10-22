@@ -14,7 +14,7 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { saveAddressPreferences, saveEeoPreferences } from '@/api/profileApi';
 import type { AddressInfo, EEOPreferences } from '@/types/profile';
-import { GENDER_OPTIONS, RACE_OPTIONS, SEXUAL_ORIENTATION_OPTIONS } from '@/types/profile';
+import { GENDER_OPTIONS, RACE_OPTIONS, SEXUAL_ORIENTATION_OPTIONS, US_CITIZENSHIP_OPTIONS } from '@/types/profile';
 import { emptyAddress, emptyEEO } from '@/utils/profileFormData';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { TriStateToggle } from './controls';
@@ -46,7 +46,7 @@ const EEO_CHOICES: { key: EeoChoiceKey; label: string; yesLabel?: string; noLabe
   { key: 'needs_sponsorship', label: 'Require visa sponsorship' },
 ];
 
-type EeoSelectKey = 'gender' | 'race' | 'sexual_orientation';
+type EeoSelectKey = 'gender' | 'race' | 'sexual_orientation' | 'us_citizenship';
 
 const EEO_SELECTS: { key: EeoSelectKey; label: string; options: readonly string[]; unspecifiedLabel: string; hint?: string }[] = [
   { key: 'gender', label: 'Gender', options: GENDER_OPTIONS, unspecifiedLabel: 'Unspecified' },
@@ -57,6 +57,13 @@ const EEO_SELECTS: { key: EeoSelectKey; label: string; options: readonly string[
     options: SEXUAL_ORIENTATION_OPTIONS,
     unspecifiedLabel: 'Unspecified (decline on forms)',
     hint: 'Forms with multiple choices get only this answer. Unspecified maps to "I don\'t wish to answer" when available.',
+  },
+  {
+    key: 'us_citizenship',
+    label: 'U.S. citizenship',
+    options: US_CITIZENSHIP_OPTIONS,
+    unspecifiedLabel: 'Unspecified (from work eligibility)',
+    hint: 'Answers citizenship and export-control (ITAR / EAR) status questions. Unspecified counts you as a U.S. citizen when you are authorized to work without sponsorship, otherwise as neither.',
   },
 ];
 

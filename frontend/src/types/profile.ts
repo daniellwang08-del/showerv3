@@ -54,6 +54,8 @@ export type EEOPreferences = {
   disability_status?: boolean | null;
   work_authorized?: boolean | null;
   needs_sponsorship?: boolean | null;
+  /** Blank means inferred from work eligibility (authorized without sponsorship = citizen). */
+  us_citizenship?: string | null;
 };
 
 export type UserProfile = {
@@ -124,6 +126,9 @@ export const SEXUAL_ORIENTATION_OPTIONS = [
   'Asexual',
   'Decline to self-identify',
 ] as const;
+
+/** Must match the Literal on EEOPreferences.us_citizenship in app/models/profile_schemas.py. */
+export const US_CITIZENSHIP_OPTIONS = ['U.S. citizen', 'U.S. permanent resident', 'Neither'] as const;
 
 /** Normalized remote / hybrid / onsite - used for validation and profile completion. */
 export function isValidJobArrangement(s: string | undefined | null): boolean {

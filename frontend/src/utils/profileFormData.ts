@@ -46,6 +46,7 @@ export const emptyEEO = (): EEOPreferences => ({
   disability_status: null,
   work_authorized: null,
   needs_sponsorship: null,
+  us_citizenship: '',
 });
 
 /** Normalize a stored tri-state yes/no value into true | false | null. */
@@ -114,6 +115,7 @@ function eeoToForm(raw: UserProfile['eeo_preferences']): EEOPreferences {
     disability_status: toTriState(e.disability_status),
     work_authorized: toTriState(e.work_authorized),
     needs_sponsorship: toTriState(e.needs_sponsorship),
+    us_citizenship: typeof e.us_citizenship === 'string' ? e.us_citizenship : '',
   };
 }
 

@@ -35,6 +35,7 @@ export async function saveEeoPreferences(eeo: EEOPreferences): Promise<UserProfi
     disability_status: eeo.disability_status ?? null,
     work_authorized: eeo.work_authorized ?? null,
     needs_sponsorship: eeo.needs_sponsorship ?? null,
+    us_citizenship: emptyToNull(eeo.us_citizenship ?? undefined),
   };
   const { data } = await apiClient.patch<UserProfile>('/profile/eeo', body);
   return data;

@@ -212,8 +212,10 @@ export async function resumePicking() {
 
 // Classify a field label into a stable identity / EEO / work-authorization /
 // consent category, or null if it isn't one we remember. MUST stay identical to
-// the copy in content/picker.js so cached keys line up. Order matters (work_auth
-// keywords overlap citizenship).
+// the copy in content/picker.js so cached keys line up. Order matters: citizenship
+// and export-control status are not work authorization (a green card holder is
+// authorized but not a citizen), so they are never cached and the server answers
+// them from the profile.
 function answerCategory(label) {
   const s = (label || "").toLowerCase();
   if (!s) return null;
@@ -223,7 +225,8 @@ function answerCategory(label) {
   if (/veteran/.test(s)) return "veteran";
   if (/disab/.test(s)) return "disability";
   if (/sponsor/.test(s)) return "sponsorship";
-  if (/citizen|authoriz|eligible to work|right to work|legally authorized/.test(s)) return "work_auth";
+  if (/citizen|u\.?\s?s\.? person|export.control|\bitar\b|\bear\b|permanent resident|green ?card/.test(s)) return null;
+  if (/authoriz|eligible to work|right to work|legally authorized/.test(s)) return "work_auth";
   if (/how did you hear|hear about (us|this|the)/.test(s)) return "how_hear";
   if (/\bconsent\b|acknowledg|i agree|\bterms\b|privacy/.test(s)) return "consent";
   return null;

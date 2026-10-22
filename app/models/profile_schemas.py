@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from datetime import datetime
 import re
+from typing import Literal
 
 from app.models.resume_design_schemas import PHOTO_MAX_CHARS, check_photo_data_url
 
@@ -115,8 +116,11 @@ class EEOPreferences(BaseModel):
     disability_status: bool | None = None
     work_authorized: bool | None = None
     needs_sponsorship: bool | None = None
+    # "U.S. citizen" | "U.S. permanent resident" | "Neither". None = infer it
+    # from work_authorized / needs_sponsorship (see autofill's us_citizenship).
+    us_citizenship: Literal["U.S. citizen", "U.S. permanent resident", "Neither"] | None = None
 
-    @field_validator("gender", "race", "sexual_orientation", mode="before")
+    @field_validator("gender", "race", "sexual_orientation", "us_citizenship", mode="before")
     @classmethod
     def empty_to_none(cls, v):
         return _empty_to_none(v)

@@ -65,6 +65,7 @@ export function profileFormToPayload(data: ProfileFormData) {
       disability_status: data.eeo_preferences.disability_status ?? null,
       work_authorized: data.eeo_preferences.work_authorized ?? null,
       needs_sponsorship: data.eeo_preferences.needs_sponsorship ?? null,
+      us_citizenship: emptyToNull(data.eeo_preferences.us_citizenship ?? undefined),
     },
     address: {
       line1: emptyToNull(data.address.line1 ?? undefined),

@@ -4923,6 +4923,8 @@ export interface components {
             work_authorized?: boolean | null;
             /** Needs Sponsorship */
             needs_sponsorship?: boolean | null;
+            /** Us Citizenship */
+            us_citizenship?: ("U.S. citizen" | "U.S. permanent resident" | "Neither") | null;
         };
         /** EducationBlock */
         EducationBlock: {
