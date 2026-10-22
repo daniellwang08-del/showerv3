@@ -281,8 +281,16 @@ async def _owned_held(session: AsyncSession, user_id: str, package_id: str) -> U
     return pkg
 
 
-async def mark_redeemed(session: AsyncSession, user_id: str, package_id: str, *, kind: str) -> UserPackage:
-    """Consume a held package exactly once, even under double submits."""
+async def mark_redeemed(
+    session: AsyncSession, user_id: str, package_id: str, *, kind: str, ref: str | None = None
+) -> UserPackage:
+    """Consume a held package exactly once, even under double submits.
+
+    Everything about the use is written in this one UPDATE and the row is then
+    reloaded. Changing ``pkg`` afterwards and flushing would expire its
+    server-side ``updated_at``, and reading that again outside a greenlet
+    crashes the request (and rolls the whole use back).
+    """
     pkg = await _owned_held(session, user_id, package_id)
     if pkg.kind != kind:
         raise StoreError("This package cannot be used that way.")
@@ -290,7 +298,8 @@ async def mark_redeemed(session: AsyncSession, user_id: str, package_id: str, *,
     result = await session.execute(
         update(UserPackage)
         .where(UserPackage.id == package_id, UserPackage.owner_user_id == user_id, UserPackage.status == "held")
-        .values(status="redeemed", redeemed_at=now, updated_at=now)
+        .values(status="redeemed", redeemed_at=now, updated_at=now, redeemed_ref=ref)
+        .execution_options(synchronize_session=False)
     )
     if not result.rowcount:
         raise StoreError("This package was already used.")
@@ -299,18 +308,20 @@ async def mark_redeemed(session: AsyncSession, user_id: str, package_id: str, *,
 
 
 async def redeem_credits(session: AsyncSession, user: User, package_id: str) -> dict[str, Any]:
-    pkg = await mark_redeemed(session, user.id, package_id, kind="credits")
+    """Turn a held credit package into balance. The package moves from held to used."""
+    pkg = await mark_redeemed(session, user.id, package_id, kind="credits", ref=package_id)
+    credits = int(pkg.credits or 0)
+    if credits <= 0:
+        raise StoreError("This package has no credits to add.")
     balance = await add_credits(
         session,
         user.id,
-        int(pkg.credits),
+        credits,
         reason="package",
         ref_id=pkg.id,
         note=f"{package_name(pkg.code)} package",
     )
-    pkg.redeemed_ref = pkg.id
-    await session.flush()
-    logger.info("store_credits_redeemed", user_id=user.id, package_id=pkg.id, credits=pkg.credits)
+    logger.info("store_credits_redeemed", user_id=user.id, package_id=pkg.id, credits=credits, balance=balance)
     return {"balance": balance, "package": (await _serialize(session, [pkg]))[0]}
 
 

@@ -20,10 +20,10 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
-import type { LedgerEntry, StorePackage } from '@/types/store';
+import type { LedgerEntry, StorePackage, StoreResponse } from '@/types/store';
 import { extractApiErrorMessage } from '@/utils/profileErrors';
 import { formatCount } from './plansModel';
-import { groupHeld, ledgerLabel, packageOrigin, shortDate, STORE_KEY, TEAM_OVERVIEW_KEY } from './storeModel';
+import { applyRedeem, groupHeld, ledgerLabel, packageOrigin, shortDate, STORE_KEY, TEAM_OVERVIEW_KEY } from './storeModel';
 
 type Action = { kind: 'gift' | 'team'; pkg: StorePackage } | null;
 
@@ -41,6 +41,7 @@ export function MyPackages() {
   const redeem = useMutation({
     mutationFn: (pkg: StorePackage) => redeemPackage(pkg.id),
     onSuccess: (res, pkg) => {
+      queryClient.setQueryData<StoreResponse>(STORE_KEY, (prev) => (prev ? applyRedeem(prev, res) : prev));
       toast.success(`${formatCount(pkg.credits)} credits added. Balance: ${formatCount(res.balance)}`);
       refresh();
     },

@@ -110,14 +110,38 @@ describe('PlansPage', () => {
     expect(screen.getByRole('listitem', { name: 'TEAM package' })).toBeInTheDocument();
   });
 
-  it('adds a credit package to the balance', async () => {
+  it('adds a credit package to the balance and moves it out of the store', async () => {
     const user = userEvent.setup();
-    vi.mocked(fetchStore).mockResolvedValue(store({ held: [pkg({})] }));
-    vi.mocked(redeemPackage).mockResolvedValue({ balance: 1050, package: pkg({ status: 'redeemed' }) });
+    vi.mocked(fetchStore)
+      .mockResolvedValueOnce(store({ held: [pkg({})] }))
+      .mockReturnValue(new Promise<StoreResponse>(() => {}));
+    vi.mocked(redeemPackage).mockResolvedValue({
+      balance: 1050,
+      package: pkg({ status: 'redeemed', redeemed_at: '2026-10-21T12:00:00Z' }),
+    });
     renderPage();
     const card = await screen.findByRole('listitem', { name: 'Pro package' });
+    expect(screen.getByLabelText('50 credits')).toBeInTheDocument();
     await user.click(within(card).getByRole('button', { name: /Add to balance/ }));
     await waitFor(() => expect(redeemPackage).toHaveBeenCalledWith('p1'));
+    expect(await screen.findByLabelText('1050 credits')).toBeInTheDocument();
+    expect(screen.queryByRole('listitem', { name: 'Pro package' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Used (1)' })).toBeInTheDocument();
+    expect(screen.getByText(/1,000 credits added to your balance/)).toBeInTheDocument();
+  });
+
+  it('uses one package from a stack and keeps the rest', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchStore)
+      .mockResolvedValueOnce(store({ held: [pkg({ id: 'a' }), pkg({ id: 'b' })] }))
+      .mockReturnValue(new Promise<StoreResponse>(() => {}));
+    vi.mocked(redeemPackage).mockResolvedValue({ balance: 1050, package: pkg({ id: 'a', status: 'redeemed' }) });
+    renderPage();
+    const card = await screen.findByRole('listitem', { name: 'Pro package, 2 held' });
+    await user.click(within(card).getByRole('button', { name: /Add to balance/ }));
+    await waitFor(() => expect(redeemPackage).toHaveBeenCalledWith('a'));
+    expect(await screen.findByLabelText('1050 credits')).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: 'Pro package' })).toBeInTheDocument();
   });
 
   it('gives a package by email', async () => {

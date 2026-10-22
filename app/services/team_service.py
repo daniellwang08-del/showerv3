@@ -281,21 +281,21 @@ async def overview(session: AsyncSession, user: User) -> dict[str, Any]:
 async def create_space(session: AsyncSession, lead: User, package_id: str, raw_name: str) -> dict[str, Any]:
     """Use one TEAM package to open a space. The package is consumed for good."""
     name = clean_name(raw_name)
+    space_id = str(uuid.uuid4())
     try:
-        pkg = await store_service.mark_redeemed(session, lead.id, package_id, kind="team")
+        pkg = await store_service.mark_redeemed(session, lead.id, package_id, kind="team", ref=space_id)
     except store_service.StoreNotFound as e:
         raise TeamNotFound() from e
     except store_service.StoreError as e:
         raise TeamError(str(e)) from e
     space = TeamSpace(
-        id=str(uuid.uuid4()),
+        id=space_id,
         public_id=await new_public_id(session),
         name=name,
         owner_user_id=lead.id,
         package_id=pkg.id,
     )
     session.add(space)
-    pkg.redeemed_ref = space.id
     await session.flush()
     logger.info("team_space_created", user_id=lead.id, space_id=space.id, public_id=space.public_id)
     return space_public(space, lead=lead)

@@ -2,6 +2,7 @@ import asyncio
 import re
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects import postgresql
 
 from app.models.database import TeamInvite, TeamMember, TeamSpace, User, UserPackage
@@ -43,8 +44,10 @@ class _Session:
         self.objects = objects or {}
         self.added = []
         self.flushed = 0
+        self.statements = []
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        self.statements.append(stmt)
         return self._results.pop(0)
 
     async def get(self, _model, key):
@@ -171,6 +174,46 @@ def test_a_team_package_cannot_be_redeemed_as_credits():
         run(store_service.mark_redeemed(_Session(objects={"p1": pkg}), "u1", "p1", kind="credits"))
 
 
+def _update_values(stmt):
+    return stmt.compile(dialect=postgresql.dialect()).params
+
+
+def test_redeeming_a_credit_package_adds_its_credits_and_uses_it_up():
+    pkg = UserPackage(
+        id="p1", code="pro", kind="credits", credits=1000, price_cents=8000,
+        status="held", source="admin_grant", owner_user_id="u1",
+    )
+    session = _Session(
+        _Result(rowcount=1),
+        _Result(scalar=1050),
+        _Result(rows=[_user()]),
+        objects={"p1": pkg},
+    )
+    out = run(store_service.redeem_credits(session, _user(), "p1"))
+
+    assert out["balance"] == 1050
+    assert out["package"]["id"] == "p1"
+    values = _update_values(session.statements[0])
+    assert values["status"] == "redeemed" and values["redeemed_ref"] == "p1"
+    assert "credit_balance" in str(session.statements[1])
+    (entry,) = session.added
+    assert (entry.user_id, entry.delta, entry.balance_after, entry.reason, entry.ref_id) == (
+        "u1", 1000, 1050, "package", "p1",
+    )
+    assert entry.note == "Pro package"
+    # A pending change on the package would be flushed and expire its server-side
+    # updated_at, which async SQLAlchemy cannot reload while serializing.
+    assert "redeemed_ref" not in sa_inspect(pkg).committed_state
+
+
+def test_a_credit_package_without_credits_is_refused():
+    pkg = UserPackage(id="p1", code="pro", kind="credits", credits=0, owner_user_id="u1", status="held")
+    session = _Session(_Result(rowcount=1), objects={"p1": pkg})
+    with pytest.raises(store_service.StoreError, match="no credits"):
+        run(store_service.redeem_credits(session, _user(), "p1"))
+    assert session.added == []
+
+
 def test_double_redeem_race_is_caught_by_the_conditional_update():
     pkg = UserPackage(id="p1", code="pro", kind="credits", owner_user_id="u1", status="held")
     session = _Session(_Result(rowcount=0), objects={"p1": pkg})
@@ -275,7 +318,9 @@ def test_creating_a_space_consumes_the_team_package():
     assert re.fullmatch(r"nao-\d{8}", space["public_id"])
     assert space["lead"]["id"] == "u1"
     (row,) = [o for o in session.added if isinstance(o, TeamSpace)]
-    assert row.package_id == "p1" and pkg.redeemed_ref == row.id
+    assert row.package_id == "p1"
+    assert _update_values(session.statements[0])["redeemed_ref"] == row.id
+    assert "redeemed_ref" not in sa_inspect(pkg).committed_state
 
 
 def test_a_credit_package_cannot_open_a_space():

@@ -1,4 +1,4 @@
-import type { LedgerEntry, StorePackage } from '@/types/store';
+import type { LedgerEntry, StorePackage, StoreResponse } from '@/types/store';
 
 export const STORE_KEY = ['store'] as const;
 export const TEAM_OVERVIEW_KEY = ['teams', 'overview'] as const;
@@ -53,6 +53,20 @@ export function groupHeld(held: StorePackage[]): HeldGroup[] {
     else groups.set(key, { key, code: pkg.code, origin, first: pkg, items: [pkg] });
   }
   return [...groups.values()].sort((a, b) => (ORDER[a.code] ?? 9) - (ORDER[b.code] ?? 9));
+}
+
+/** A redeemed package leaves the store, joins the used list, and its credits are in the new balance. */
+export function applyRedeem(
+  store: StoreResponse,
+  res: { balance: number; package: StorePackage },
+): StoreResponse {
+  const id = res.package.id;
+  return {
+    ...store,
+    balance: res.balance,
+    held: store.held.filter((p) => p.id !== id),
+    used: [res.package, ...store.used.filter((p) => p.id !== id)],
+  };
 }
 
 export function ledgerLabel(entry: LedgerEntry): string {
