@@ -297,8 +297,8 @@
       let s = 0;
       if (t === w) s = 100;
       else if (t && t.replace(/[.,]/g, "") === w.replace(/[.,]/g, "")) s = 90;
-      else if (t && t.includes(w)) s = 60;
-      else if (t && w.includes(t)) s = 40;
+      else if (AF.dom.containsWord(t, w)) s = 60;
+      else if (AF.dom.containsWord(w, t)) s = 40;
       if (s > score) {
         score = s;
         best = el;

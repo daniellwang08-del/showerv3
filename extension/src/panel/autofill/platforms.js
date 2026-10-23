@@ -5,7 +5,7 @@ import * as api from "../../api.js";
 import * as storage from "../../storage.js";
 import { setAutofill, state } from "../state.js";
 import { fetchRoleFile } from "./form.js";
-import { debugLog, delay, getAutofillProfile, tabBroadcast, tabSend } from "./shared.js";
+import { debugLog, delay, generatePortalPassword, getAutofillProfile, tabBroadcast, tabSend } from "./shared.js";
 
 // Greenhouse "Discipline" is a fixed-taxonomy dropdown that rarely contains a
 // candidate's actual discipline, so (mirroring the Workday standard field-of-
@@ -144,35 +144,6 @@ export async function prepareJobvite(tabId) {
 }
 
 // ── iCIMS ────────────────────────────────────────────────────────────────────
-
-// A password satisfying the rule iCIMS states in the field's own title
-// attribute: "Minimum 8 characters, 1 alphabetic, 1 lowercase, 1 uppercase,
-// 1 numeric, 1 special character(s)". Ambiguous glyphs (l/1/O/0) are left out so
-// the candidate can retype it from the panel without misreading it.
-function generatePortalPassword() {
-  const lower = "abcdefghijkmnpqrstuvwxyz";
-  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const digits = "23456789";
-  const special = "!@#$%^&*";
-  const all = lower + upper + digits + special;
-  const bytes = new Uint32Array(20);
-  crypto.getRandomValues(bytes);
-  const chars = [
-    upper[bytes[0] % upper.length],
-    lower[bytes[1] % lower.length],
-    digits[bytes[2] % digits.length],
-    special[bytes[3] % special.length],
-  ];
-  for (let i = 4; i < 16; i++) chars.push(all[bytes[i] % all.length]);
-  // Shuffle so the four guaranteed classes are not always in the same slots.
-  const swap = new Uint32Array(chars.length);
-  crypto.getRandomValues(swap);
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = swap[i] % (i + 1);
-    [chars[i], chars[j]] = [chars[j], chars[i]];
-  }
-  return chars.join("");
-}
 
 async function tabHost(tabId) {
   if (tabId == null) return "";

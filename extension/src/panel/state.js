@@ -28,6 +28,8 @@ export function emptyAutofill() {
     loopMessage: null,
     primaryFrameId: null,
     aaLogs: [],
+    // Workday portal login NAO created or signed in with: { login, password }.
+    account: null,
   };
 }
 

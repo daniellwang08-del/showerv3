@@ -126,7 +126,7 @@ async def test_indeed_reads_descriptions_from_job_details(monkeypatch):
                 }
             return {"hits": []}
         if path == "/job/a1":
-            return {"description": "<p>Run the platform.</p><ul><li>Kubernetes</li></ul>", "indeed_final_url": "https://www.indeed.com/viewjob?jk=a1&vjs=3"}
+            return {"description": "<p>Run the platform.</p><ul><li>Kubernetes</li></ul>", "indeed_final_url": "https://www.indeed.com/viewjob?jk=a1&vjs=3&spa=1"}
         return ConnectionConfigError("detail failed")
 
     fake, calls = _recorder(replies)
@@ -135,9 +135,18 @@ async def test_indeed_reads_descriptions_from_job_details(monkeypatch):
     search = calls[0]["params"]
     assert search["locality"] == "gb" and search["location"] == "remote" and search["fromage"] == "1"
     assert search["query"] == "senior software engineer"
-    assert jobs[0].url == "https://www.indeed.com/viewjob?jk=a1&vjs=3"
+    assert jobs[0].url == "https://www.indeed.com/viewjob?jk=a1"
     assert jobs[0].description == "Run the platform.\n\n- Kubernetes"
     assert (jobs[1].url, jobs[1].description) == ("https://uk.indeed.com/viewjob?jk=b2", "")
+
+
+def test_indeed_view_urls_drop_the_spa_json_switch():
+    assert indeed.clean_view_url("https://www.indeed.com/viewjob?jk=e675313db0ba059a&vjs=3&spa=1") == (
+        "https://www.indeed.com/viewjob?jk=e675313db0ba059a"
+    )
+    assert indeed.clean_view_url("https://ca.indeed.com/viewjob?vjs=3&jk=9f&spa=1") == "https://ca.indeed.com/viewjob?jk=9f"
+    assert indeed.clean_view_url("https://jobs.lever.co/acme/1?spa=1") == "https://jobs.lever.co/acme/1?spa=1"
+    assert indeed.clean_view_url("https://www.indeed.com/viewjob?vjs=3") == "https://www.indeed.com/viewjob?vjs=3"
 
 
 @pytest.mark.asyncio

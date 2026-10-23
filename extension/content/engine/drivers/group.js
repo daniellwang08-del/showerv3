@@ -6,7 +6,7 @@
 (() => {
   const AF = window.__AF;
   if (!AF) return;
-  const { clean, labelForControl } = AF.dom;
+  const { clean, containsWord, labelForControl } = AF.dom;
 
   function scopeOf(el) {
     return (el.closest && el.closest("form, fieldset, [role='group'], [role='radiogroup']")) || document;
@@ -141,10 +141,11 @@
     if (w === "no" || w === "false") {
       if (lt === "no" || val === "no" || val === "false" || lt === "false") return 95;
     }
-    if (lt && lt.includes(w)) return 60; // option label contains the (shorter) answer, e.g. "asian"
-    if (val && val.includes(w)) return 50;
-    if (lt && w.includes(lt)) return 30; // answer contains the (shorter) option label - loosest
-    if (val && w.includes(val)) return 20;
+    // Word-start containment only: "female" must never satisfy an answer of "male".
+    if (containsWord(lt, w)) return 60; // option label contains the (shorter) answer, e.g. "asian"
+    if (containsWord(val, w)) return 50;
+    if (containsWord(w, lt)) return 30; // answer contains the (shorter) option label - loosest
+    if (containsWord(w, val)) return 20;
     return 0;
   }
 

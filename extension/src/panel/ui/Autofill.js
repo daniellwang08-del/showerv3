@@ -63,7 +63,7 @@ function Workday({ af, autoAdvance }) {
   const busy = !!af.running;
   let status = null;
   if (busy) {
-    status = html`<${Status} tone="info" pulse>${af.autoLoop ? af.loopStatus || "Working through the application" : "Filling this step from your profile"}</${Status}>`;
+    status = html`<${Status} tone="info" pulse>${af.loopStatus || (af.autoLoop ? "Working through the application" : "Filling this step from your profile")}</${Status}>`;
   } else if (af.autoLoop && af.done && af.loopMessage) {
     const tone = af.loopFinished === "review" ? "ok" : ["error", "needs_user", "stuck"].includes(af.loopFinished) ? "warn" : "info";
     status = html`<${Status} tone=${tone}>${af.loopMessage}</${Status}>`;
@@ -80,6 +80,9 @@ function Workday({ af, autoAdvance }) {
     />
     ${status}
     ${af.error ? html`<${Banner} tone="danger">${af.error}</${Banner}>` : null}
+    ${af.account
+      ? html`<p class="af-note">Workday login: ${af.account.login} / ${af.account.password}. NAO uses this password for every Workday site, so save it in your password manager.</p>`
+      : null}
     ${af.reports.length
       ? html`<ul class="af-steps">
           ${af.reports.map((r) => {

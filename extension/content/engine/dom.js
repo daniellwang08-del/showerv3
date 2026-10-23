@@ -44,6 +44,23 @@
       .toLowerCase();
   }
 
+  // Substring test that only counts hits starting a word: "male" is not in
+  // "female" (or "cisgender/female"), but "bachelor" is in "bachelors degree".
+  function containsWord(hay, needle) {
+    if (!hay || !needle) return false;
+    for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + 1)) {
+      if (i === 0 || !/[\p{L}\p{N}]/u.test(hay[i - 1])) return true;
+    }
+    return false;
+  }
+
+  // Option text vs wanted answer: equal, or one holds the other at a word start.
+  function textsMatch(a, b) {
+    const x = normText(a);
+    const y = normText(b);
+    return !!x && !!y && (x === y || containsWord(x, y) || containsWord(y, x));
+  }
+
   function isVisible(el) {
     if (!el || !el.getBoundingClientRect) return false;
     const r = el.getBoundingClientRect();
@@ -430,8 +447,12 @@
     const labelledby = inp.getAttribute && inp.getAttribute("aria-labelledby");
     const byId = textOfIds(labelledby);
     if (byId) return byId.slice(0, 200);
-    if (inp.getAttribute && inp.getAttribute("aria-label")) {
-      return clean(inp.getAttribute("aria-label")).slice(0, 200);
+    const aria = clean(inp.getAttribute && inp.getAttribute("aria-label"));
+    if (aria && !PLACEHOLDER_LABEL_RE.test(aria)) return aria.slice(0, 200);
+    if (aria) {
+      const q = questionAbove(inp);
+      if (q) return q.slice(0, 200);
+      return aria.slice(0, 200);
     }
     // A control inside a <fieldset> is described by its <legend>.
     const fs = inp.closest && inp.closest("fieldset");
@@ -483,7 +504,33 @@
         }
       }
     } catch {}
+    const above = questionAbove(inp);
+    if (above) return above.slice(0, 200);
     if (inp.parentElement) return clean(inp.parentElement.innerText).slice(0, 200);
+    return "";
+  }
+
+  // Widget names that say nothing about the question ("Select", "textbox").
+  const PLACEHOLDER_LABEL_RE = /^(select|select\.{3}|select\u2026|select one|choose|choose one|search|textbox|text box|input|dropdown|combobox)$/i;
+
+  // Question text rendered as a control-free block just above the field's
+  // wrapper (Rippling custom questions: <div><p>Are you able to...?</p></div>
+  // followed by the field). Climbs a few ancestors to the first one with a
+  // previous sibling and uses that sibling only if it holds no controls.
+  function questionAbove(inp) {
+    try {
+      let node = inp;
+      for (let depth = 0; node && depth < 8; depth++) {
+        const prev = node.previousElementSibling;
+        if (prev) {
+          if (prev.querySelector('input, select, textarea, [role="combobox"], [role="radio"], button')) return "";
+          const t = clean(prev.innerText || prev.textContent);
+          return t && t.length <= 600 ? t : "";
+        }
+        node = node.parentElement;
+        if (!node || node.tagName === "FORM" || node.tagName === "BODY") return "";
+      }
+    } catch {}
     return "";
   }
 
@@ -681,6 +728,8 @@
   AF.dom = {
     clean,
     normText,
+    containsWord,
+    textsMatch,
     isVisible,
     delay,
     waitUntil,

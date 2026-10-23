@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 from app.job_sites.base import (
     DEFAULT_SEARCH_KEYWORDS,
@@ -60,6 +61,20 @@ def locality(ctx: FetchContext) -> str:
 
 def view_url(job_id: str, loc: str) -> str:
     return f"https://{_VIEW_HOSTS.get(loc, f'{loc}.indeed.com')}/viewjob?jk={job_id}"
+
+
+def clean_view_url(url: str) -> str:
+    """Indeed viewjob links reduced to ``?jk=``; other links unchanged.
+
+    The API's final URL carries ``spa=1``, which makes Indeed answer with the page's
+    raw JSON instead of the job page.
+    """
+    parts = urlsplit(url)
+    host = parts.netloc.lower()
+    if not (host == "indeed.com" or host.endswith(".indeed.com")) or not parts.path.rstrip("/").endswith("/viewjob"):
+        return url
+    jk = dict(parse_qsl(parts.query)).get("jk", "").strip()
+    return f"https://{host}/viewjob?jk={jk}" if jk else url
 
 
 def search_params(credentials: dict[str, Any], ctx: FetchContext) -> dict[str, str]:
@@ -134,7 +149,7 @@ async def _fetch(credentials: dict[str, Any], ctx: FetchContext) -> list[BoardJo
     for hit, info in zip(hits, details):
         job_id = _text(hit.get("id"))
         company = info.get("company") if isinstance(info.get("company"), dict) else {}
-        url = _text(info.get("indeed_final_url")) or view_url(job_id, loc)
+        url = clean_view_url(_text(info.get("indeed_final_url")) or view_url(job_id, loc))
         jobs.append(
             BoardJob(
                 url=url,

@@ -211,6 +211,17 @@
       return true;
     }
 
+    // Pre-application gate (posting → Apply Manually → account). Only the top
+    // frame acts; one action per message because each one reloads the page.
+    if (msg.type === "WD_GATE") {
+      if (window.top !== window || !WD || !WD.engine || !WD.engine.gateStep) return;
+      WD.aborted = false;
+      WD.engine
+        .gateStep(msg.creds || null)
+        .then((res) => sendResponse(res), (e) => sendResponse({ page: null, error: String((e && e.message) || e) }));
+      return true;
+    }
+
     // Immediate stop from the side panel. Invalidates the current runSeq so a
     // WD_RUN already in the message queue cannot restart after Stop. Bumping
     // epoch aborts in-flight D.delay/waitFor captured at the old epoch.

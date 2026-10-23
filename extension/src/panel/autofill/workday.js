@@ -3,6 +3,7 @@
 // and run the LLM recovery round trip between steps.
 
 import * as api from "../../api.js";
+import * as storage from "../../storage.js";
 import { handleApplicationSubmitted } from "../actions/job.js";
 import { toast } from "../toast.js";
 import { emptyAutofill, setAutofill, setState, state } from "../state.js";
@@ -13,6 +14,7 @@ import {
   debugLog,
   delay,
   downloadApplicationResume,
+  generatePortalPassword,
   getAutofillProfile,
   submitAllowed,
   tabBroadcast,
@@ -327,6 +329,112 @@ async function handleWorkdayResolve(msg) {
   }
 }
 
+// ── Before the application ─────────────────────────────────────────────────
+// Workday job links open the posting. Reaching the form takes Apply → Apply
+// Manually → Create Account (or Sign In when the tenant already has one). Every
+// step reloads the page, so this loop re-injects and asks the page for one
+// action at a time. One generated password serves every Workday tenant, so the
+// candidate can sign in anywhere with the same login.
+const WD_GATE_ROUNDS = 8;
+const WD_CREDENTIAL_HOST = "myworkdayjobs.com";
+
+async function workdayCredentials(email) {
+  const userId = state.user && state.user.user_id;
+  let creds = null;
+  try {
+    creds = await storage.getAtsCredential(userId, WD_CREDENTIAL_HOST);
+  } catch {
+    creds = null;
+  }
+  if (!creds) {
+    creds = { login: email, password: generatePortalPassword() };
+    try {
+      await storage.saveAtsCredential(userId, WD_CREDENTIAL_HOST, creds);
+    } catch {
+      /* the password is still shown in the panel */
+    }
+  }
+  return { email: email || creds.login, password: creds.password };
+}
+
+async function waitTabSettled(tabId, ms = 30_000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) return false;
+    if (tab.status === "complete") return true;
+    await delay(400);
+  }
+  return true;
+}
+
+/** Run the gate for a fill; false (with the panel already updated) when the form was not reached. */
+async function passWorkdayGate(tabId, engine, profile) {
+  const email = (profile && profile.contact && profile.contact.email) || (profile && profile.email) || "";
+  const gate = await reachWorkdayForm(tabId, engine, email);
+  setAutofill({ loopStatus: null });
+  if (gate.ok) return true;
+  setAutofill({ running: false, done: true, error: gate.stopped ? null : gate.message });
+  return false;
+}
+
+/** Click through to the application form. Returns { ok } or { ok: false, message }. */
+export async function reachWorkdayForm(tabId, engine, email) {
+  const stopped = () => !state.autofill.active || state.autofill.loopStop;
+  let creds = null;
+  let last = "";
+  for (let round = 0; round < WD_GATE_ROUNDS; round++) {
+    if (stopped()) return { ok: false, stopped: true };
+    await waitTabSettled(tabId);
+    await chrome.runtime.sendMessage({ type: "AUTOFILL_INJECT", tabId, engine: engine.scripts }).catch(() => null);
+    let page = null;
+    let res = null;
+    // Workday renders the posting and the account form a moment after load.
+    for (let i = 0; i < 12 && !stopped(); i++) {
+      res = await tabSend(tabId, { type: "WD_GATE", creds }, 0).catch(() => null);
+      page = res && res.page;
+      if (page) break;
+      await delay(700);
+    }
+    if (!page || page === "form") return { ok: true };
+    if (page === "verifyEmail") {
+      return {
+        ok: false,
+        message: "Workday sent a verification email. Open the link in it, sign in on this page, then press Fill again.",
+      };
+    }
+    if ((page === "createAccount" || page === "signIn") && !(res && res.acted)) {
+      if (!creds) {
+        if (!email) return { ok: false, message: "Your profile has no email, so NAO cannot create the Workday account. Sign in yourself, then press Fill again." };
+        setAutofill({ loopStatus: "Creating your Workday account…" });
+        creds = await workdayCredentials(email);
+        setAutofill({ account: { login: creds.email, password: creds.password } });
+        continue;
+      }
+    }
+    const step = `${page}:${(res && res.acted) || ""}`;
+    if (step === last || !(res && res.acted)) {
+      const why = res && res.error ? ` Workday says: ${res.error}` : "";
+      const what =
+        page === "signIn"
+          ? "Workday did not accept the sign-in."
+          : page === "createAccount"
+            ? "Workday did not create the account."
+            : "Could not open the Workday application.";
+      return { ok: false, message: `${what}${why} Finish this page yourself, then press Fill again.` };
+    }
+    last = step;
+    setAutofill({
+      loopStatus:
+        { apply: "Opening the application…", applyManually: "Choosing Apply Manually…", create: "Creating your Workday account…", toSignIn: "Signing in to your Workday account…", signIn: "Signing in to your Workday account…" }[
+          res.acted
+        ] || "Opening the application…",
+    });
+    await delay(2500);
+  }
+  return { ok: false, message: "Could not reach the Workday application form. Open it yourself, then press Fill again." };
+}
+
 // Workday: fetch the canonical structured profile (respecting the user's
 // original/tailored resume preference), optionally attach the generated resume
 // file, and tell the in-page engine to fill the current step. Auto-advance is
@@ -345,6 +453,7 @@ export async function startWorkdayAutofill(tab, engine) {
     setAutofill({ running: false, done: true, error: "Could not load your profile: " + ((err && err.message) || err) });
     return;
   }
+  if (!(await passWorkdayGate(tab.id, engine, profile))) return;
 
   // Best-effort resume attachment. The server returns the tailored file or the
   // original resume, following the account's "Resume for applications" setting.
@@ -893,8 +1002,10 @@ export async function rerunWorkday() {
     loopStop: false,
     loopFinished: null,
     loopMessage: null,
-  });  try {
+  });
+  try {
     const profile = await getAutofillProfile(job.job_id);
+    if (!(await passWorkdayGate(tabId, af.engine, profile))) return;
     let resumeFile = null;
     try {
       resumeFile = await downloadApplicationResume(job.job_id);

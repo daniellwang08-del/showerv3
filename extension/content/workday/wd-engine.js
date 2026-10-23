@@ -184,8 +184,10 @@
       logDetectStep("myInfo");
       return "myInfo";
     }
-    // Fallback: any page that exposes Workday formField wrappers is fillable.
-    if (D.exists('[data-automation-id^="formField-"]')) {
+    // Fallback: any page that exposes Workday formField wrappers is fillable,
+    // except Create Account / Sign In (formField-email/-password), which the
+    // panel handles through gateStep with the saved portal password.
+    if (D.exists('[data-automation-id^="formField-"]') && !isAccountPage()) {
       logDetectStep("generic");
       return "generic";
     }
@@ -464,7 +466,122 @@
     }
   }
 
+  // ── Before the application: posting → "Start Your Application" → account ──
+  // Live DOM (msk.wd108.myworkdayjobs.com): the posting's Apply is
+  // a[data-automation-id=adventureButton]; it opens a popup with applyManually /
+  // autofillWithResume / useMyLastApplication links; Apply Manually loads a page
+  // with signInContent holding either Create Account (email, password,
+  // verifyPassword, createAccountCheckbox, createAccountSubmitButton) or Sign In
+  // (email, password, signInSubmitButton). Each submit button sits under a
+  // click_filter overlay. Every step reloads the page, so the panel calls
+  // gateStep once per page and re-injects in between.
+  const GATE_VERIFY_RE =
+    /(verify|confirm|activate) your (email|e-mail|account)|verification (email|e-mail|link|code)|check your (email|e-mail|inbox)/i;
+  const GATE_EXISTS_RE = /already (exists|in use|registered|been used|associated)|account (already )?exists|is already taken/i;
+
+  function visibleAid(id) {
+    return D.qa(S.AID(id)).find(D.isVisible) || null;
+  }
+
+  // Errors shown on the account forms only. The page-wide role=alert live
+  // region also announces "<Job title> page is loaded", which is not an error.
+  function gateErrorText() {
+    const scope = visibleAid("signInContent");
+    if (!scope) return "";
+    const nodes = [
+      ...scope.querySelectorAll(
+        '[data-automation-id="errorMessage"], [data-automation-id="inputAlert"], [data-automation-id*="rror"], [role="alert"]',
+      ),
+    ].filter(D.isVisible);
+    return nodes
+      .map((n) => (n.innerText || "").replace(/\s+/g, " ").trim())
+      .filter((t) => t && !/\bpage is loaded\b/i.test(t))
+      .join(" ")
+      .slice(0, 300);
+  }
+
+  function isAccountPage() {
+    return !!(visibleAid("signInContent") || visibleAid("verifyPassword") || visibleAid("signInSubmitButton"));
+  }
+
+  function gatePage() {
+    if (isAccountPage()) {
+      return visibleAid("verifyPassword") || visibleAid("createAccountSubmitButton") ? "createAccount" : "signIn";
+    }
+    if (visibleAid("applyManually")) return "chooser";
+    if (visibleAid("adventureButton") && !D.exists(S.AID("applyFlowPage"))) return "posting";
+    if (detectStep()) return "form";
+    const text = (document.body && document.body.innerText) || "";
+    return GATE_VERIFY_RE.test(text.slice(0, 6000)) ? "verifyEmail" : null;
+  }
+
+  function typeInto(el, value) {
+    if (!el) return false;
+    try {
+      el.focus({ preventScroll: true });
+    } catch {}
+    D.nativeSet(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    D.nativeSet(el, String(value));
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, data: String(value) }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    return el.value === String(value);
+  }
+
+  function pressSubmit(id) {
+    const btn = visibleAid(id);
+    if (!btn) return false;
+    const wrap = btn.closest('[data-automation-id="noCaptchaWrapper"]') || btn.parentElement;
+    const filter = wrap && D.qa(S.AID("click_filter"), wrap).find(D.isVisible);
+    D.clickEl(filter || btn);
+    return true;
+  }
+
+  // One action on the current pre-application page. Returns { page, acted,
+  // error }; acted names what was clicked so the panel can tell a stuck page
+  // (same page, same action, twice) from progress.
+  async function gateStep(creds) {
+    const page = gatePage();
+    const error = gateErrorText();
+    const out = { page, error, acted: null };
+    if (page === "posting") {
+      D.clickEl(visibleAid("adventureButton"));
+      out.acted = "apply";
+      await D.waitFor(S.AID("applyManually"), 6000).catch(() => null);
+    } else if (page === "chooser") {
+      D.clickEl(visibleAid("applyManually"));
+      out.acted = "applyManually";
+    } else if (page === "createAccount") {
+      if (GATE_EXISTS_RE.test(error) && visibleAid("signInLink")) {
+        D.clickEl(visibleAid("signInLink"));
+        out.acted = "toSignIn";
+      } else if (creds && creds.email && creds.password) {
+        typeInto(visibleAid("email"), creds.email);
+        typeInto(visibleAid("password"), creds.password);
+        typeInto(visibleAid("verifyPassword"), creds.password);
+        const box = visibleAid("createAccountCheckbox") || D.q(S.AID("createAccountCheckbox"));
+        if (box && !box.checked) D.clickEl(box);
+        await D.delay(300);
+        out.acted = pressSubmit("createAccountSubmitButton") ? "create" : null;
+      }
+    } else if (page === "signIn") {
+      if (creds && creds.email && creds.password) {
+        typeInto(visibleAid("email"), creds.email);
+        typeInto(visibleAid("password"), creds.password);
+        await D.delay(300);
+        out.acted = pressSubmit("signInSubmitButton") ? "signIn" : null;
+      }
+    }
+    try {
+      if (WD.aa) WD.aa("gateStep", { page, acted: out.acted, error: error.slice(0, 120) });
+    } catch {}
+    return out;
+  }
+
   WD.engine = {
+    gatePage,
+    gateStep,
     detectStep,
     detectSubmittedPage,
     detectValidation,

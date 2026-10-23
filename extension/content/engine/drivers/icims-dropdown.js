@@ -166,7 +166,7 @@
     if (o === w) return 100;
     if (w.startsWith(o)) return 90 - Math.min(20, w.length - o.length);
     if (o.startsWith(w)) return 80 - Math.min(20, o.length - w.length);
-    if (o.includes(w) || w.includes(o)) return 40;
+    if (AF.dom.containsWord(o, w) || AF.dom.containsWord(w, o)) return 40;
     return 0;
   }
 

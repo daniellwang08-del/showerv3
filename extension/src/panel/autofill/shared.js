@@ -115,3 +115,32 @@ export async function downloadApplicationResume(jobId) {
 export function clearProfileCache() {
   profileCache.clear();
 }
+
+// A password satisfying the usual ATS rule (iCIMS states it in the field's
+// title, Workday lists it): 8+ characters with a lowercase, an uppercase, a
+// digit and a special character. Ambiguous glyphs (l/1/O/0) are left out so
+// the candidate can retype it from the panel without misreading it.
+export function generatePortalPassword() {
+  const lower = "abcdefghijkmnpqrstuvwxyz";
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const digits = "23456789";
+  const special = "!@#$%^&*";
+  const all = lower + upper + digits + special;
+  const bytes = new Uint32Array(20);
+  crypto.getRandomValues(bytes);
+  const chars = [
+    upper[bytes[0] % upper.length],
+    lower[bytes[1] % lower.length],
+    digits[bytes[2] % digits.length],
+    special[bytes[3] % special.length],
+  ];
+  for (let i = 4; i < 16; i++) chars.push(all[bytes[i] % all.length]);
+  // Shuffle so the four guaranteed classes are not always in the same slots.
+  const swap = new Uint32Array(chars.length);
+  crypto.getRandomValues(swap);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = swap[i] % (i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join("");
+}

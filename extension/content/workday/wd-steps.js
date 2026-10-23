@@ -229,6 +229,17 @@
     return "";
   }
 
+  // `needle` occurs in `hay` starting on a word boundary: "university of
+  // washington" is in "university of washington-seattle campus" but NOT in
+  // "university of mary washington", and "male" is not in "female".
+  function containsWordStart(hay, needle) {
+    if (!hay || !needle) return false;
+    for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) {
+      if (i === 0 || !/[\p{L}\p{N}]/u.test(hay[i - 1])) return true;
+    }
+    return false;
+  }
+
   // Has this prompt/multiselect committed a selection matching `want`?
   // Empty want => any committed selection counts (used to skip already-filled).
   function promptChosen(multi, want) {
@@ -238,13 +249,13 @@
       const t = D.norm(sel.textContent);
       if (!t) continue;
       if (!w) return true;
-      if (t.includes(w) || (w.length > 3 && w.includes(t))) return true;
+      if (containsWordStart(t, w) || (w.length > 3 && containsWordStart(w, t))) return true;
     }
     const aria = multi.querySelector('[data-automation-id="promptAriaInstruction"]');
     const at = D.norm(aria && aria.textContent);
     if (!at || /^0 items? selected/.test(at) || at === "minimized") return false;
     if (!w) return /\d+\s+items?\s+selected/.test(at);
-    return at.includes(w);
+    return containsWordStart(at, w);
   }
 
   // Committed value present (ignores aria-invalid). Used to avoid re-opening
@@ -1342,16 +1353,37 @@
     });
   }
 
-  function pickResultOption(want, root) {
+  // Choices made for ambiguous search results (normalised want -> option text),
+  // so Education 2 with the same school reuses Education 1's answer.
+  const searchPicks = new Map();
+
+  // Which search-result row answers `want`? Returns { row } when decided,
+  // { ambiguous: [texts] } when several rows are equally plausible (e.g. the
+  // Bothell / Seattle / Tacoma campuses for "University of Washington"), or {}
+  // when nothing is related. Never falls back to "shortest substring" or the
+  // highlighted row: those committed "University of Mary Washington" and the
+  // Tacoma campus for a plain "University of Washington" profile.
+  function searchResultTarget(want, root) {
     const w = D.norm(want);
-    const scored = promptResultOptions(root)
+    const rows = promptResultOptions(root)
       .map((o) => ({ o, t: D.norm(o.textContent) }))
       .filter((x) => x.t);
-    const exact = scored.find((x) => x.t === w);
-    if (exact) return exact.o;
-    const contains = scored.filter((x) => x.t.includes(w)).sort((a, b) => a.t.length - b.t.length);
-    if (contains.length) return contains[0].o;
-    return null;
+    if (!rows.length || !w) return {};
+    const exact = rows.find((x) => x.t === w);
+    if (exact) return { row: exact.o };
+    const picked = searchPicks.get(w);
+    const prior = picked && rows.find((x) => x.t === D.norm(picked));
+    if (prior) return { row: prior.o };
+    const related = rows.filter(
+      (x) => containsWordStart(x.t, w) || (x.t.includes(" ") && x.t.length * 2 >= w.length && containsWordStart(w, x.t)),
+    );
+    if (related.length === 1) return { row: related[0].o };
+    if (related.length > 1) {
+      return { ambiguous: related.map((x) => x.o.textContent.replace(/\s+/g, " ").trim()), rows: related };
+    }
+    // A lone result for an acronym ("MIT", "UCLA") is the server's own match.
+    if (rows.length === 1 && /^[a-z&.]{2,8}$/.test(w)) return { row: rows[0].o };
+    return {};
   }
 
   // Workday Canvas prompt rows select on POINTER events. D.clickEl only fires
@@ -2977,21 +3009,28 @@
   //   2. WAIT until "Search Results (N)" appears (list may briefly show "No Items").
   //   3. Press Enter WHILE the typed text is still present, that commits a unique
   //      match, or highlights the best of N>1 matches.
-  //   4. If still not committed (N>1), press Enter AGAIN with the text still there.
-  //   5. Last resort: click the EXACT option (pickOption prefers exact text so
-  //      "University of Wollongong" wins over "… in Dubai").
+  //   4. Decide the target row FIRST (searchResultTarget). Enter only when the
+  //      target is the first (highlighted) row; otherwise pointer-click it.
+  //      "University of Washington" returns "University of Mary Washington"
+  //      first, and a blind Enter committed it (issue #20). Several campuses
+  //      ("...-Seattle Campus", "...-Tacoma Campus") go to opts.choose (LLM)
+  //      once; the answer is cached for later entries with the same school.
   //
   // Anti-pattern that FAILED on this tenant: Enter before matches appear, or
   // clearing the input after matches appear then pressing Enter on an empty
   // "Search" placeholder, leaves Search Results open with no selection (and
   // that open prompt then poisons Degree openAndPick for the same panel).
-  async function fillSearchPrompt(multi, value) {
+  async function fillSearchPrompt(multi, value, opts) {
     const want = D.norm(value);
-    const isChosen = () => promptChosen(multi, want);
-    if (isChosen()) return true;
+    const choose = opts && opts.choose;
+    let target = null;
+    const isChosen = () =>
+      target ? promptChosen(multi, D.norm(target)) : promptChosen(multi, want);
+    if (promptChosen(multi, want)) return true;
     const input = multi.querySelector("input");
     if (!input) return false;
     const opener = multi.querySelector('[data-automation-id="multiselectInputContainer"]') || input;
+    let asked = false;
 
     for (let attempt = 0; attempt < 2; attempt++) {
       // 1. Open ONCE. Never click the opener/input again after this, a click on
@@ -3016,11 +3055,40 @@
       await waitForFilteredOption(value, 5000);
       await D.delay(220);
 
-      // 4. Enter, then Enter again, focus PINNED to the input the whole time.
-      //    pressKey re-focuses the input itself, and nothing between the two
-      //    presses clicks, blurs, clears or retypes. Enter #1 commits a unique
-      //    match / highlights the best of N; Enter #2 confirms the highlight.
-      for (let i = 0; i < 2 && !isChosen(); i++) {
+      // 4. Pick the row before committing anything.
+      let pick = searchResultTarget(value);
+      if (pick.ambiguous && !asked) {
+        asked = true;
+        await closePrompt(multi, input);
+        let answer = null;
+        try {
+          answer = choose ? await choose(value, pick.ambiguous) : null;
+        } catch (e) {
+          if (e && e.name === "WDAborted") throw e;
+        }
+        const n = D.norm(answer);
+        const hit = n && pick.ambiguous.find((t) => D.norm(t) === n);
+        searchPicks.set(want, hit || pick.ambiguous[0]);
+        try {
+          WD.log(`search prompt '${value}': ${pick.ambiguous.length} matches, chose ${JSON.stringify(hit || pick.ambiguous[0])} (llm=${JSON.stringify(answer)})`);
+        } catch {}
+        attempt--;
+        continue;
+      }
+      if (pick.ambiguous) pick = { row: pick.rows[0].o };
+      const match = pick.row || null;
+      if (!match) {
+        try {
+          WD.warn(`search prompt '${value}': no matching result among ${promptResultOptions().length} rows, left for the user`);
+        } catch {}
+        await closePrompt(multi, input);
+        return false;
+      }
+      target = match.textContent.replace(/\s+/g, " ").trim();
+
+      // 5. The target is the highlighted first row: Enter commits it with the
+      //    typed text still present (proven on-tenant).
+      if (promptResultOptions()[0] === match) {
         input.focus();
         pressEnter(input);
         await D.delay(500);
@@ -3030,10 +3098,9 @@
         return true;
       }
 
-      // 5. Fallback: pointer-click the exact result row (full pointer sequence,
-      //    plain click events are ignored by Canvas prompt rows).
-      const match = pickResultOption(value);
-      if (match) {
+      // 6. Pointer-click the target row (full pointer sequence, plain click
+      //    events are ignored by Canvas prompt rows).
+      if (match.isConnected) {
         firePointerClick(match);
         await D.delay(320);
         if (!isChosen()) {
@@ -5709,6 +5776,27 @@
     return out;
   }
 
+  // Several School results all name the profile's school (campuses of one
+  // university). Let the profile-aware LLM pick; it answers with option text.
+  async function chooseSchoolResult(school, options) {
+    const cid = "wd-school-" + D.norm(school).replace(/[^a-z0-9]+/g, "-");
+    const values = await requestOptionMatches([
+      {
+        cid,
+        key: "school",
+        label:
+          "School or University. Pick the result that is the candidate's school; " +
+          "when the profile names the university without a campus, pick its main/flagship campus",
+        want: school,
+        kind: "select",
+        required: true,
+        options,
+      },
+    ]);
+    const v = values && values[cid];
+    return Array.isArray(v) ? v[0] : v || null;
+  }
+
   async function fillSearchPromptAny(multi, candidates) {
     for (const value of candidates) {
       if (await fillSearchPrompt(multi, value)) return true;
@@ -5734,7 +5822,7 @@
             rep,
             `Edu ${n} School`,
             schoolMulti
-              ? await fillSearchPrompt(schoolMulti, entry.school)
+              ? await fillSearchPrompt(schoolMulti, entry.school, { choose: chooseSchoolResult })
               : await writeField(schoolFF, entry.school),
           );
         }

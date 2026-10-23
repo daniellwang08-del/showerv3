@@ -401,10 +401,15 @@ def _build_autofill_prompt(
         "United States of America' - never drop the region to leave only 'Denver, United "
         "States of America'). Do not substitute a street line unless the label clearly asks "
         "for street / line1.\n"
-        "  * Work arrangement / location preference: the candidate PREFERS REMOTE work. For an "
-        "'ideal office setting' / remote-vs-hybrid-vs-onsite / work-arrangement question, choose "
-        "the Remote option (or the most-remote option available, e.g. Remote over Hybrid over "
-        "On-site).\n"
+        "  * Work arrangement / location preference: the candidate PREFERS REMOTE work. For a "
+        "question asking which arrangement they PREFER ('ideal office setting', remote vs hybrid "
+        "vs onsite), choose the Remote option (or the most-remote option available, e.g. Remote "
+        "over Hybrid over On-site).\n"
+        "  * Onsite / hybrid / office attendance requirements: a question asking whether the "
+        "candidate CAN or IS WILLING to work from an office, onsite, in person, a set number of "
+        "days per week, commute, or relocate (e.g. 'Are you able to work from our NYC office 3 "
+        "times per week?') is about meeting the job's requirement, not about preference: ALWAYS "
+        "answer it affirmatively ('Yes'), even though the candidate prefers remote work.\n"
         "  * Job-search stage / status / availability: the candidate is ACTIVELY job searching "
         "(started recently, about 2 weeks ago) and is available to start in the near term. For a "
         "'where are you in your job search' / availability / notice-period question, pick the "
@@ -720,9 +725,7 @@ async def assistant_chat(req: AssistantChatRequest, current_user: dict = Depends
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         documents_text = await _application_documents_text(session, user, req.job_id)
-        profile_text = _answer_profile_text(user, documents_text)
-        if documents_text:
-            profile_text = (profile_text + "\n\n" + documents_text).strip()
+        profile_text = _applicant_profile_text(user, documents_text)
 
         # Prefer the session's frozen snapshot; fall back to the live job.
         sess = (
@@ -809,9 +812,16 @@ def _match_option(want: str, options: list[str]) -> str | None:
             return o
     for o in options:
         ol = o.strip().lower()
-        if ol and (w in ol or ol in w):
+        if _contains_word(ol, w) or _contains_word(w, ol):
             return o
     return None
+
+
+def _contains_word(hay: str, needle: str) -> bool:
+    """Substring hit that starts a word: "male" is not in "female", "bachelor" is in "bachelors"."""
+    if not hay or not needle:
+        return False
+    return re.search(r"(?<![^\W_])" + re.escape(needle), hay) is not None
 
 
 # Deterministic phone normalization. The model is unreliable at splitting the
@@ -1150,6 +1160,39 @@ def _us_status_option(label: str, options: list[str], status: str) -> str | None
     )
 
 
+_ONSITE_PLACE_RE = re.compile(
+    r"\boffice\b|\bon[\s-]?site\b|\bin[\s-]?person\b|\bhybrid\b|\bcommut|\brelocat|\breport (?:to|in)\b"
+    r"|\bdays? (?:a|per) week\b|\btimes? (?:a|per) week\b",
+    re.I,
+)
+_ONSITE_WILLING_RE = re.compile(
+    r"\b(?:able|willing|comfortable|open|agree|commit|available|ok|okay)\b|\b(?:can|could|would) you\b", re.I
+)
+
+
+def _yes_no_options(options: list[str]) -> tuple[str, str] | None:
+    """(affirmative, negative) when the options are a yes / no pair, including "Yes, I can ..." wording."""
+    opts = [str(o) for o in (options or []) if str(o).strip()]
+    yes = [o for o in opts if re.match(r"\s*(yes|y)\b", o, re.I)]
+    no = [o for o in opts if re.match(r"\s*(no|n)\b", o, re.I)]
+    if len(yes) != 1 or not no or len(opts) > 3:
+        return None
+    return yes[0], no[0]
+
+
+def _onsite_yes_option(label: str, options: list[str]) -> str | None:
+    """The affirmative option for "can you work from our office / onsite / hybrid / relocate" questions.
+
+    These ask whether the candidate meets the job's attendance requirement, not which
+    arrangement they prefer, so the remote preference must not turn them into a "No".
+    """
+    pair = _yes_no_options(options)
+    low = (label or "").lower()
+    if not pair or not (_ONSITE_PLACE_RE.search(low) and _ONSITE_WILLING_RE.search(low)):
+        return None
+    return pair[0]
+
+
 def _is_eeo_exclusive_label(label: str) -> bool:
     """EEO controls that are mutually exclusive, multi dumps must collapse."""
     low = (label or "").lower()
@@ -1474,9 +1517,10 @@ def _parse_autofill_results(
                     if _is_us_status_question(spec.label, spec.options)
                     else None
                 )
-                if us_status:
-                    value = us_status
-                    option = us_status
+                onsite_yes = None if us_status else _onsite_yes_option(spec.label, spec.options)
+                if us_status or onsite_yes:
+                    value = us_status or onsite_yes
+                    option = value
                     needs_user = False
                     reason = None
                 elif _is_sexual_orientation_label(spec.label):
@@ -1556,21 +1600,8 @@ async def assistant_autofill(
         if not user:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
         documents_text = await _application_documents_text(session, user, req.job_id)
-        profile_text = _answer_profile_text(user, documents_text)
-        identity_text = _contact_identity_text(user)
-        if identity_text:
-            profile_text = (identity_text + "\n\n" + profile_text).strip()
-        # The resume-style profile cache omits the candidate's home address, so
-        # append it for address/city/state/postal form fields to fill from.
-        addr_text = _contact_address_text(getattr(user, "address", None))
-        if addr_text:
-            profile_text = (profile_text + "\n\n" + addr_text).strip()
+        profile_text = _applicant_profile_text(user, documents_text)
         eeo_prefs = getattr(user, "eeo_preferences", None) or {}
-        eeo_text = _eeo_preferences_text(eeo_prefs)
-        if eeo_text:
-            profile_text = (profile_text + "\n\n" + eeo_text).strip()
-        if documents_text:
-            profile_text = (profile_text + "\n\n" + documents_text).strip()
 
         sess = (
             await session.execute(
@@ -1718,6 +1749,20 @@ def _contact_identity_text(user: Any) -> str:
     if not lines:
         return ""
     return "## Contact Details\n" + "\n".join(lines)
+
+
+def _applicant_profile_text(user: Any, documents_text: str) -> str:
+    """Everything the chat and autofill may answer from: contact details, the
+    résumé-style profile, the home address (absent from the résumé cache), EEO
+    answers and this job's application documents."""
+    parts = [
+        _contact_identity_text(user),
+        _answer_profile_text(user, documents_text),
+        _contact_address_text(getattr(user, "address", None)),
+        _eeo_preferences_text(getattr(user, "eeo_preferences", None) or {}),
+        documents_text,
+    ]
+    return "\n\n".join(p.strip() for p in parts if p and p.strip())
 
 
 def _contact_address_text(addr: Any) -> str:

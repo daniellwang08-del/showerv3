@@ -5,7 +5,7 @@
 (() => {
   const AF = window.__AF;
   if (!AF) return;
-  const { clean, normText, setNativeValue, fireInput, setReactTextValue, setReactSelectValue, labelForControl, constraintsOf } =
+  const { clean, normText, containsWord, setNativeValue, fireInput, setReactTextValue, setReactSelectValue, labelForControl, constraintsOf } =
     AF.dom;
 
   const SKIP_INPUT_TYPES = ["hidden", "submit", "button", "image", "reset"];
@@ -93,7 +93,7 @@
     }
     if (!best) {
       for (const o of sel.options) {
-        if (clean(o.text).toLowerCase().includes(w) && w) {
+        if (containsWord(clean(o.text).toLowerCase(), w)) {
           best = o;
           break;
         }
@@ -142,7 +142,7 @@
     for (const o of sel.options) {
       const t = clean(o.text).toLowerCase();
       const v = clean(o.value).toLowerCase();
-      if (list.some((w) => t === w || v === w || (t && (t.includes(w) || w.includes(t))))) {
+      if (list.some((w) => t === w || v === w || containsWord(t, w) || containsWord(w, t))) {
         o.selected = true;
         any = true;
       }

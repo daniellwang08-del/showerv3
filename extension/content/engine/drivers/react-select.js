@@ -9,7 +9,7 @@
 (() => {
   const AF = window.__AF;
   if (!AF) return;
-  const { clean, normText, isVisible, delay, waitUntil, setNativeValue } = AF.dom;
+  const { clean, normText, textsMatch, isVisible, delay, waitUntil, setNativeValue } = AF.dom;
 
   const COMBO_ROOT_SEL =
     '[class*="select__control"], [class*="select-control"], [class*="Select-control"], [role="combobox"]';
@@ -99,16 +99,14 @@
     const value = clean(want);
     if (!sel || !value) return false;
     const w = normText(value);
-    for (const opt of sel.options) {
-      const t = normText(clean(opt.textContent));
-      if (t === w || (t && (t.includes(w) || w.includes(t)))) {
-        sel.value = opt.value;
-        sel.dispatchEvent(new Event("input", { bubbles: true }));
-        sel.dispatchEvent(new Event("change", { bubbles: true }));
-        return true;
-      }
-    }
-    return false;
+    const options = [...sel.options];
+    const opt =
+      options.find((o) => normText(clean(o.textContent)) === w) || options.find((o) => textsMatch(o.textContent, value));
+    if (!opt) return false;
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
   }
 
   function isMultiCombo(root, input) {
@@ -150,9 +148,7 @@
   }
 
   function chipMatches(root, want) {
-    const w = normText(want);
-    if (!w) return false;
-    return chipTexts(root).some((t) => t === w || t.includes(w) || w.includes(t));
+    return chipTexts(root).some((t) => textsMatch(t, want));
   }
 
   // react-select's empty-state notice matches our [class*="-option"] selector;
@@ -176,10 +172,11 @@
   // menus (e.g. a 200-entry country list bleeding into an unrelated control).
   function comboListbox(input, root) {
     try {
-      const inp = input || comboInput(root);
-      const id = inp && (inp.getAttribute("aria-controls") || inp.getAttribute("aria-owns"));
-      if (id) {
-        const lb = document.getElementById(id);
+      // Rippling's combobox is a bare div[role=combobox] (no input) that sets
+      // aria-controls on itself while open; its listbox is portalled elsewhere.
+      for (const el of [input || comboInput(root), root]) {
+        const id = el && el.getAttribute && (el.getAttribute("aria-controls") || el.getAttribute("aria-owns"));
+        const lb = id && document.getElementById(id);
         if (lb) return lb;
       }
     } catch {}
@@ -246,7 +243,19 @@
     if (isAshbyValueCombo(root, input) && input && clean(input.value) && !comboIsExpanded(input)) {
       return true;
     }
-    return false;
+    return !!bareComboValue(root, input);
+  }
+
+  // Input-less div[role=combobox] (Rippling): the committed option is the
+  // div's own text; while empty it shows its aria-label placeholder in a <p>.
+  function bareComboValue(root, input) {
+    if (input || !root || root.getAttribute("role") !== "combobox") return "";
+    const t = clean(root.innerText || root.textContent);
+    if (!t) return "";
+    const ph = clean(root.getAttribute("aria-label") || root.getAttribute("placeholder"));
+    if (ph && normText(t) === normText(ph)) return "";
+    if (/^(select|choose)\b.{0,12}$/i.test(t)) return "";
+    return t;
   }
 
   function comboSelectionText(root) {
@@ -256,14 +265,11 @@
     if (isAshbyValueCombo(root, input) && input && clean(input.value) && !comboIsExpanded(input)) {
       return clean(input.value);
     }
-    return "";
+    return bareComboValue(root, input);
   }
 
   function valueMatchesWant(got, want) {
-    const g = normText(got);
-    const w = normText(want);
-    if (!g || !w) return false;
-    return g === w || g.includes(w) || w.includes(g);
+    return textsMatch(got, want);
   }
 
   function comboIsExpanded(input) {
@@ -343,10 +349,14 @@
       if (normText(o.innerText || o.textContent) === w) return o;
     }
     for (const o of nodes) {
-      const t = normText(o.innerText || o.textContent);
-      if (t && (t.includes(w) || w.includes(t))) return o;
+      if (textsMatch(o.innerText || o.textContent, w)) return o;
     }
     return null;
+  }
+
+  function isActiveOption(o) {
+    const cls = String((o.className && o.className.baseVal !== undefined ? o.className.baseVal : o.className) || "");
+    return /is-focused|--focused|option--active/i.test(cls) || o.getAttribute("aria-selected") === "true";
   }
 
   function clickOption(opt) {
@@ -400,19 +410,30 @@
   }
 
   // The native react-select interaction: open, type the answer (which filters
-  // the list and auto-highlights the first match), then press Enter to commit
-  // it. One open, no option-node hunting. A single click fallback covers the
-  // rare non-searchable widget whose input ignores typing.
+  // the list and auto-highlights the first match), then commit. react-select
+  // filters by plain substring, so typing "Male" lists "Female" first; Enter
+  // would commit that. When the matching option is not the highlighted one,
+  // click it instead.
   async function typeAndEnter(input, root, value) {
     (input || root).focus();
     openCombo(input, root);
     if (!input) return;
     setNativeValue(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
-    // Wait until the filtered option list has rendered, then commit with Enter.
     await waitUntil(() => (scopedOptionNodes(input, root).length ? true : null), 800, 50);
-    pressEnter(input);
+    const nodes = scopedOptionNodes(input, root);
+    const opt = pickOption(nodes, value);
+    const active = nodes.find(isActiveOption) || nodes[0];
+    if (opt && !isActiveOption(opt)) clickOption(opt);
+    else if (opt || !active || !wrongPick(active.innerText || active.textContent, value)) pressEnter(input);
     await delay(80);
+  }
+
+  // A pick that only holds the answer inside another word ("Female" for "Male").
+  function wrongPick(got, want) {
+    const g = normText(got);
+    const w = normText(want);
+    return !!g && !!w && (g.includes(w) || w.includes(g)) && !textsMatch(g, w);
   }
 
   async function writeSingle(root, want) {
@@ -423,9 +444,9 @@
     const cur = comboSelectionText(root);
     if (cur && valueMatchesWant(cur, value)) return true;
 
-    // Pinpoint EEO / equality selects use a read-only dummyInput: open the menu
-    // and click the option (typing + Enter is ignored).
-    if (isDummyInput(input)) {
+    // Pinpoint EEO / equality selects use a read-only dummyInput, and Rippling's
+    // combobox has no input at all: open the menu and click the option.
+    if (!input || isDummyInput(input)) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           openCombo(input, root);
@@ -549,10 +570,11 @@
       return finalOk;
     }
 
+    const picked = () => comboHasSelection(root) && !wrongPick(comboSelectionText(root), value);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await typeAndEnter(input, root, value);
-        if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
+        if (await waitUntil(() => (picked() ? true : null), 700, 60)) return true;
         // Fallback: type+Enter silently no-ops when the model's answer is not a
         // byte-exact substring react-select's OWN filter accepts (e.g. a long
         // Greenhouse sentence whose live option uses an em-dash "-" the model
@@ -563,13 +585,13 @@
         const opt = pickOption(await clearedOptionNodes(input, root), value);
         if (opt) {
           clickOption(opt);
-          if (await waitUntil(() => (comboHasSelection(root) ? true : null), 700, 60)) return true;
+          if (await waitUntil(() => (picked() ? true : null), 700, 60)) return true;
         }
       } catch {}
       closeMenu(input, root);
       await delay(120);
     }
-    return comboHasSelection(root);
+    return picked();
   }
 
   async function writeMulti(root, values) {

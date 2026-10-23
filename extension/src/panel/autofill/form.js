@@ -285,7 +285,10 @@ function extractTimeoutMs(handles) {
   }
   // Each unfilled react-select harvest opens/closes a menu (~300–800ms). A 42-control
   // Greenhouse embed easily exceeds the old 4s cap; scale with control count.
-  return Math.min(120000, Math.max(20000, 6000 + controls * 450));
+  // The count comes from the region scan and undercounts custom widgets
+  // (Rippling: 14 reported, 20 real, ~13-28s to harvest), so keep a generous
+  // floor: the wait ends as soon as the page replies.
+  return Math.min(120000, Math.max(45000, 6000 + controls * 450));
 }
 
 function extractSpecs(tabId, handles) {
